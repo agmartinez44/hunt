@@ -214,6 +214,13 @@ button, input, select, textarea {
   display: inline-flex;
   align-items: center;
   margin-left: auto;
+  min-width: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-primitive="AppBar"] > [data-primitive="NavItem"]:last-of-type {
+  flex: 0 0 auto;
 }
 [data-primitive="WorkspaceChip"]:hover {
   background: var(--surface-2);
@@ -731,6 +738,10 @@ main.page {
   background: var(--surface);
   color: var(--text);
 }
+[data-primitive="TextInput"]::placeholder,
+[data-primitive="Textarea"]::placeholder {
+  color: var(--text-faint);
+}
 [data-primitive="Textarea"] {
   height: 72px;
   padding: var(--space-2);
@@ -1196,7 +1207,8 @@ main.page {
     min-height: 44px;
     height: 44px;
   }
-  [data-primitive="PageHeader"].profile-header {
+  [data-primitive="PageHeader"].profile-header,
+  [data-primitive="PageHeader"].agent-header {
     position: static;
     background: transparent;
   }
@@ -1235,4 +1247,179 @@ main.page {
   [data-primitive="AppShell"].profile-dirty main.page {
     padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 52px + var(--space-4));
   }
+  [data-primitive="AppShell"].agent-dirty main.page {
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 52px + var(--space-4));
+  }
+  .agent-page [data-primitive="AgentSection"] .form-actions [data-primitive="Btn"].primary,
+  [data-primitive="SecretField"] [data-primitive="Btn"] {
+    min-height: 44px;
+    height: 44px;
+    width: 100%;
+  }
+  [data-primitive="DoctorList"] .doctor-row {
+    height: auto;
+    min-height: 36px;
+    flex-wrap: wrap;
+  }
+}
+
+[data-primitive="PageHeader"] .kicker {
+  flex: 1 0 100%;
+  order: 4;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  line-height: 18px;
+}
+
+.agent-page {
+  max-width: 1080px;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 1fr;
+}
+.agent-span {
+  min-width: 0;
+}
+@media (min-width: 800px) {
+  .agent-page {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .agent-span {
+    grid-column: 1 / -1;
+  }
+}
+
+[data-primitive="AgentStatus"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-4);
+}
+[data-primitive="AgentStatus"] h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-md);
+  line-height: 18px;
+}
+[data-primitive="AgentStatus"] p {
+  margin: 0;
+  color: var(--text-muted);
+}
+[data-primitive="AgentStatus"][data-state="connected"] {
+  background: var(--status-sent-bg);
+}
+[data-primitive="AgentStatus"][data-state="fail"] {
+  background: var(--status-rejected-bg);
+}
+[data-primitive="AgentStatus"][data-state="fail"] h2 {
+  color: var(--danger);
+}
+
+[data-primitive="HarnessPicker"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-3) 0;
+}
+
+[data-primitive="InstallPreview"] {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+[data-primitive="InstallPreview"] ul,
+.install-confirm-paths {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+}
+[data-primitive="InstallPreview"] li,
+.install-confirm-paths li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  margin-bottom: var(--space-1);
+}
+[data-primitive="InstallPreview"] .preview-flag {
+  font-family: var(--font);
+  color: var(--text-muted);
+}
+[data-primitive="InstallPreview"] code,
+.install-confirm-paths code {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+}
+
+[data-primitive="DoctorList"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+[data-primitive="DoctorList"] .doctor-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+[data-primitive="DoctorList"] .doctor-row:first-child {
+  border-top: 0;
+}
+[data-primitive="DoctorList"] .doctor-flag {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  width: 36px;
+  flex: 0 0 auto;
+  color: var(--status-sent-fg);
+}
+[data-primitive="DoctorList"] .doctor-row[data-ok="false"] .doctor-flag,
+[data-primitive="DoctorList"] .doctor-row[data-ok="false"] span:last-child {
+  color: var(--danger);
+}
+[data-primitive="DoctorList"] .doctor-row[data-severity="note"] .doctor-flag {
+  color: var(--warn);
+}
+[data-primitive="DoctorList"] .doctor-row span:last-child {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+[data-primitive="SecretField"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+[data-primitive="SecretField"] .secret-name {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  padding: var(--space-2) 0;
+}
+[data-primitive="SecretField"] [data-primitive="FormField"] {
+  flex: 1 1 220px;
+}
+
+.agent-page [data-primitive="AgentSection"].section {
+  min-width: 0;
+}
+.agent-page [data-primitive="AgentSection"] .form-grid {
+  max-width: none;
+}
+.agent-page .no-sub {
+  margin: var(--space-3) 0 0;
+}
+.agent-page .form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }

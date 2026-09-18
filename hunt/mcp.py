@@ -360,6 +360,59 @@ TOOLS: list[dict[str, Any]] = [
         },
         ["role"],
     ),
+    _tool(
+        "agent_status",
+        "Harness + model settings. Never returns secret values.",
+        {
+            "harness": {
+                "type": "string",
+                "enum": [
+                    "claude",
+                    "cursor",
+                    "codex",
+                    "opencode",
+                    "openclaw",
+                    "paperclip",
+                ],
+            },
+        },
+    ),
+    _tool(
+        "agent_config",
+        "Set agent.harness / agent.model. Keys stay in secrets.env.",
+        {
+            "harness": {
+                "type": "string",
+                "enum": [
+                    "auto",
+                    "claude",
+                    "cursor",
+                    "codex",
+                    "opencode",
+                    "openclaw",
+                    "paperclip",
+                ],
+            },
+            "base_url": {"type": "string"},
+            "api_key_env": {"type": "string"},
+            "model": {"type": "string"},
+        },
+    ),
+    _tool(
+        "agent_secret_set",
+        "Write a model key to secrets.env. Never echoes the value.",
+        {
+            "env": {"type": "string"},
+            "value": {"type": "string"},
+        },
+        ["env", "value"],
+    ),
+    _tool(
+        "agent_secret_unset",
+        "Remove a model key from secrets.env.",
+        {"env": {"type": "string"}},
+        ["env"],
+    ),
 ]
 
 
@@ -622,6 +675,39 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
                 root=arguments.get("root"),
             )
         )
+    if name == "agent_status":
+        from hunt.agent.status import agent_status
+
+        return _ok(agent_status(ws, harness=arguments.get("harness")))
+    if name == "agent_config":
+        from hunt.agent.status import save_agent
+
+        model = {}
+        if "base_url" in arguments:
+            model["base_url"] = arguments["base_url"]
+        if "api_key_env" in arguments:
+            model["api_key_env"] = arguments["api_key_env"]
+        if "model" in arguments:
+            model["model"] = arguments["model"]
+        return _ok(
+            save_agent(
+                ws,
+                harness=arguments.get("harness"),
+                model=model or None,
+            )
+        )
+    if name == "agent_secret_set":
+        from hunt.agent.status import set_agent_secret
+
+        payload = set_agent_secret(
+            ws, str(arguments["env"]), str(arguments.get("value") or "")
+        )
+        return _ok({"api_key_set": payload["api_key_set"], "env": arguments["env"]})
+    if name == "agent_secret_unset":
+        from hunt.agent.status import unset_agent_secret
+
+        payload = unset_agent_secret(ws, str(arguments["env"]))
+        return _ok({"api_key_set": payload["api_key_set"], "env": arguments["env"]})
     return _err(f"unknown tool: {name}")
 
 

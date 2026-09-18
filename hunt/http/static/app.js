@@ -35,6 +35,41 @@
     ["integrity", "Integrity"],
   ];
   const SKILL_LEVELS = ["production", "working", "limited", "homelab"];
+  const HARNESS_CHIPS = [
+    ["auto", "Auto"],
+    ["claude", "Claude"],
+    ["cursor", "Cursor"],
+    ["codex", "Codex"],
+    ["opencode", "OpenCode"],
+    ["openclaw", "OpenClaw"],
+    ["paperclip", "Paperclip"],
+  ];
+  const HARNESS_HELP = {
+    auto: "Hunt uses the first installed harness: OpenCode, then Claude Code or Codex. None found — Hunt will not start a chat here. Install OpenCode, or pick a harness you already use.",
+    claude: "Writes project .mcp.json + .claude/skills/… (stdio hunt mcp)",
+    cursor: "Writes .cursor/mcp.json",
+    codex: "Writes ~/.codex/config.toml [mcp_servers.hunt]",
+    opencode: "Writes opencode.json mcp.hunt (local stdio)",
+    openclaw: "Writes OpenClaw MCP + Hunt skills",
+    paperclip: "Imports Hunt packs as company skills. Hunt does not require Paperclip.",
+  };
+  const MODEL_PATHS = [
+    ["spacexai", "SpaceXAI"],
+    ["local", "Local"],
+    ["custom", "Custom"],
+  ];
+  const SPACEXAI = {
+    base_url: "https://api.x.ai/v1",
+    api_key_env: "XAI_API_KEY",
+    model: "grok-4.5",
+  };
+  const LOCAL_MODEL = {
+    base_url: "http://127.0.0.1:8080/v1",
+    api_key_env: "",
+    model: "local-model",
+  };
+
+  let pendingKey = "";
 
   const state = {
     meta: null,
@@ -52,6 +87,13 @@
     profileDirty: false,
     knowledge: null,
     profileConflict: null,
+    agent: null,
+    agentDoctor: null,
+    agentDirty: false,
+    agentBusy: false,
+    agentReplaceKey: false,
+    agentForm: null,
+    agentError: null,
   };
 
   function $(sel, root = document) {
@@ -136,6 +178,7 @@
       const tab = params.get("tab") || "positions";
       return { name: "profile", tab: allowed.includes(tab) ? tab : "positions" };
     }
+    if (path === "/settings") return { name: "settings" };
     const m = path.match(/^\/applications\/([^/]+)$/);
     if (m) return { name: "detail", id: decodeURIComponent(m[1]) };
     return { name: "notfound" };
@@ -342,11 +385,11 @@
     return `<table data-primitive="DataTable" class="skel-chrome"><thead><tr>${th}</tr></thead></table>${bars}`;
   }
 
-  function FormField(label, control, { help, span2, name } = {}) {
-    return `<div data-primitive="FormField" class="${span2 ? "span-2" : ""}" data-name="${esc(name || "")}">
+  function FormField(label, control, { help, span2, name, err } = {}) {
+    return `<div data-primitive="FormField" class="${span2 ? "span-2" : ""}${err ? " is-invalid" : ""}" data-name="${esc(name || "")}">
       <label class="label">${esc(label)}</label>
       ${control}
-      ${help ? `<div class="help">${esc(help)}</div>` : ""}
+      ${err ? `<div class="err">${esc(err)}</div>` : help ? `<div class="help">${esc(help)}</div>` : ""}
     </div>`;
   }
 
@@ -383,11 +426,13 @@
     const ws = state.meta || {};
     const chipCurrent = current === "profile" ? `aria-current="page"` : "";
     const chip = `<a data-primitive="WorkspaceChip" href="/profile" ${chipCurrent}>${esc(ws.workspace || "workspace")}<span class="profile"> · ${esc(ws.profile_name || "")}</span></a>`;
+    const agentNav = NavItem("/settings", "Agent", current === "settings");
     return {
       bar: `<header data-primitive="AppBar">
         <a class="wordmark" href="/">Hunt</a>
         <nav class="appbar-nav appbar-nav-desktop">${items}</nav>
         ${chip}
+        ${agentNav}
       </header>`,
       tabs: `<nav data-primitive="AppTabBar"><div class="appbar-nav">${items}</div></nav>`,
     };
@@ -438,7 +483,8 @@
     const n = nav(current, badges);
     const dirty = state.quotedDirty && current === "board" && state.route.name === "detail" ? " quoted-dirty" : "";
     const pdirty = state.profileDirty && current === "profile" ? " profile-dirty" : "";
-    return `<div data-primitive="AppShell" class="${(dirty + pdirty).trim()}">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
+    const adirty = state.agentDirty && current === "settings" ? " agent-dirty" : "";
+    return `<div data-primitive="AppShell" class="${(dirty + pdirty + adirty).trim()}">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
   }
 
   function dialogHtml() {
@@ -469,12 +515,13 @@
       </div>`;
     }
     if (d.kind === "confirm") {
+      const body = d.html ? d.html : esc(d.body || "");
       return `<div class="scrim" data-close-dialog>
         <div data-primitive="ConfirmDialog" role="dialog" aria-modal="true">
           <h2>${esc(d.title)}</h2>
-          <div class="dialog-body">${esc(d.body)}</div>
+          <div class="dialog-body">${body}</div>
           <div class="dialog-actions">
-            ${Btn("Cancel", { variant: "ghost", attrs: "data-close-dialog" })}
+            ${Btn(d.cancel || "Cancel", { variant: "ghost", attrs: "data-close-dialog" })}
             ${Btn(d.ok, { variant: d.danger ? "danger" : "primary", attrs: `data-confirm-ok="${esc(d.action)}"` })}
           </div>
         </div>
@@ -495,8 +542,8 @@
     return "";
   }
 
-  function pageHeader(title, extra, actions) {
-    return `<div data-primitive="PageHeader"><h1>${title}</h1>${extra || ""}<div class="header-actions">${actions || ""}</div></div>`;
+  function pageHeader(title, extra, actions, cls) {
+    return `<div data-primitive="PageHeader" class="${esc(cls || "")}"><h1>${title}</h1>${extra || ""}<div class="header-actions">${actions || ""}</div></div>`;
   }
 
   function boardFiltersHtml() {
@@ -1720,6 +1767,395 @@
     if (Array.isArray(cur)) cur.splice(idx, 1);
   }
 
+  function harnessLabel(name) {
+    const row = HARNESS_CHIPS.find((h) => h[0] === name);
+    return row ? row[1] : name || "Auto";
+  }
+
+  function modelPathOf(model) {
+    const url = (model && model.base_url) || "";
+    if (url.includes("api.x.ai")) return "spacexai";
+    try {
+      const host = new URL(url).hostname;
+      if (host === "127.0.0.1" || host === "localhost" || host === "0.0.0.0") return "local";
+    } catch {
+      /* ignore */
+    }
+    return "custom";
+  }
+
+  function stashPendingKey() {
+    const el = document.querySelector("input[name=api_key]");
+    if (el) pendingKey = el.value;
+  }
+
+  function applyAgentPayload(payload) {
+    state.agent = payload;
+    state.agentDoctor = payload.doctor || null;
+    const model = (payload && payload.model) || {};
+    const path = modelPathOf(model);
+    state.agentForm = {
+      harness: payload.harness || "auto",
+      path,
+      base_url: model.base_url || SPACEXAI.base_url,
+      api_key_env: model.api_key_env || (path === "local" ? "" : SPACEXAI.api_key_env),
+      model: model.model || (path === "local" ? LOCAL_MODEL.model : SPACEXAI.model),
+      errors: {},
+    };
+  }
+
+  function autoHelp() {
+    const detected = state.agent && state.agent.harness_detected;
+    if (detected) return `Auto chose ${harnessLabel(detected)} (first installed).`;
+    return "No harness found. Install OpenCode (curl -fsSL https://opencode.ai/install | bash), or pick Claude / Cursor / Codex if you already run them.";
+  }
+
+  function doctorState() {
+    if (state.agentBusy) return "connecting";
+    const doc = state.agentDoctor;
+    if (!doc) return "disconnected";
+    return doc.ok ? "connected" : "fail";
+  }
+
+  function AgentStatus() {
+    const st = doctorState();
+    const form = state.agentForm || {};
+    const model = form.model || "";
+    let host = "";
+    try {
+      host = new URL(form.base_url || "").hostname || "";
+    } catch {
+      host = form.base_url || "";
+    }
+    const harness = harnessLabel(form.harness === "auto" ? (state.agent && state.agent.harness_detected) || "auto" : form.harness);
+    let title = "Not connected";
+    let body = "Hunt does not run a chat. Pick a harness you already use, or paste a SpaceXAI key.";
+    if (st === "connecting") {
+      title = "Checking…";
+      body = "Hunt does not run a chat. Connect a harness you already use, or paste a key.";
+    } else if (st === "connected") {
+      title = "Connected";
+      body = `${harness} · ${model} · ${host}`;
+    } else if (st === "fail") {
+      title = "Doctor failed";
+      const failed = ((state.agentDoctor && state.agentDoctor.checks) || []).find((c) => !c.ok);
+      body = failed ? failed.label || failed.detail || "Doctor failed" : "Doctor failed";
+    }
+    return `<div data-primitive="AgentStatus" data-state="${esc(st)}">
+      <h2>${esc(title)}</h2>
+      <p>${esc(body)}</p>
+    </div>`;
+  }
+
+  function DoctorList() {
+    if (state.agentBusy) {
+      return `<div data-primitive="DoctorList">${LoadingSkeleton(4)}</div>`;
+    }
+    const doc = state.agentDoctor;
+    if (!doc) return "";
+    const rows = (doc.checks || []).map((row) => {
+      const ok = row.ok !== false;
+      const note = row.severity === "note";
+      const flag = note ? "note" : ok ? "ok" : "fail";
+      return `<div class="doctor-row" data-ok="${ok}" data-severity="${esc(row.severity || "")}">
+        <span class="doctor-flag">${esc(flag)}</span>
+        <span>${esc(row.label || row.detail || row.id)}</span>
+      </div>`;
+    }).join("");
+    return `<div data-primitive="DoctorList">${rows}</div>`;
+  }
+
+  function SecretField() {
+    const form = state.agentForm || {};
+    const env = form.api_key_env || "XAI_API_KEY";
+    const saved = Boolean(state.agent && state.agent.api_key_set) && !state.agentReplaceKey;
+    if (saved) {
+      return `<div data-primitive="SecretField" data-set="true">
+        <span class="secret-name">${esc(env)} saved</span>
+        <button type="button" data-primitive="Btn" class="ghost" data-replace-key>Replace</button>
+        <button type="button" data-primitive="Btn" class="ghost" data-remove-key>Remove key</button>
+      </div>`;
+    }
+    const err = form.errors && form.errors.api_key;
+    return `<div data-primitive="SecretField" data-set="false">
+      ${FormField(
+        "API key",
+        `<input data-primitive="TextInput" name="api_key" type="password" autocomplete="off" placeholder="xai-…" value="${esc(pendingKey)}">`,
+        { name: "api_key", err, help: state.agentReplaceKey ? "Paste a replacement key. Cancel to keep the saved one." : "" }
+      )}
+      ${state.agentReplaceKey ? Btn("Cancel", { variant: "ghost", attrs: "data-cancel-replace-key" }) : ""}
+    </div>`;
+  }
+
+  function InstallPreview() {
+    const writes = (state.agent && state.agent.preview && state.agent.preview.writes) || [];
+    const harness = (state.agentForm && state.agentForm.harness) || "auto";
+    if (harness === "auto") {
+      return `<div data-primitive="InstallPreview"><p class="help">${esc("Auto selects a runner. Pick Claude, Cursor, Codex, or OpenCode to write files.")}</p></div>`;
+    }
+    if (!writes.length) {
+      return `<div data-primitive="InstallPreview"><p class="help">${esc("No files to preview.")}</p></div>`;
+    }
+    const rows = writes.map((w) => {
+      const present = w.exists ? "already there" : "will write";
+      return `<li><code>${esc(w.path)}</code> <span class="preview-flag">${esc(present)}</span></li>`;
+    }).join("");
+    return `<div data-primitive="InstallPreview">
+      <p class="help">Open this Hunt workspace in the harness, not the Hunt source repo.</p>
+      <ul>${rows}</ul>
+    </div>`;
+  }
+
+  function modelHelp(path) {
+    if (path === "spacexai") return "Get a key at console.x.ai. Hunt does not sell a model.";
+    if (path === "local") {
+      const url = (state.agentForm && state.agentForm.base_url) || "http://127.0.0.1:8080/v1";
+      return `Doctor will call GET ${url.replace(/\/$/, "")}/models. A small local model (Gemma E4B class) proves wiring. Screening quality may still want Grok or Claude.`;
+    }
+    return "Any OpenAI-compat /v1. Key stays in secrets.env under the env name you set.";
+  }
+
+  function renderAgentPage(root, badges) {
+    const form = state.agentForm || {};
+    const busy = state.agentBusy;
+    const disabled = busy ? "disabled" : "";
+    const st = doctorState();
+    const harness = form.harness || "auto";
+    const path = form.path || "spacexai";
+    const harnessChips = HARNESS_CHIPS.map(([id, label]) =>
+      `<button type="button" data-primitive="FilterChip" data-agent-harness="${id}" aria-pressed="${harness === id}" ${disabled}>${esc(label)}</button>`
+    ).join("");
+    const pathChips = MODEL_PATHS.map(([id, label]) =>
+      `<button type="button" data-primitive="FilterChip" data-model-path="${id}" aria-pressed="${path === id}" ${disabled}>${esc(label)}</button>`
+    ).join("");
+    let harnessHelp = HARNESS_HELP[harness] || "";
+    if (harness === "auto") harnessHelp = autoHelp();
+    const installCli = harness === "auto"
+      ? "hunt agent doctor --json"
+      : `hunt agent install --harness ${harness} --json`;
+    const firstFail = st === "fail"
+      ? ((state.agentDoctor && state.agentDoctor.checks) || []).find((c) => !c.ok)
+      : null;
+    const banner = state.agentError
+      ? ErrorBanner(state.agentError, "data-agent-retry")
+      : firstFail
+        ? ErrorBanner(firstFail.label || firstFail.detail || "Doctor failed", "data-agent-retry")
+        : "";
+    const installDisabled = busy || harness === "auto" ? "disabled" : "";
+    const localNote = path === "local"
+      ? `<p class="help">Local model — wiring is enough. Screening quality may still want Grok or Claude.</p>`
+      : "";
+    const sticky = `<div class="sticky-save${state.agentDirty ? " is-dirty" : ""}">${Btn("Save", { variant: "primary", attrs: `data-save-agent ${busy ? "disabled" : ""}` })}</div>`;
+    const checkLabel = busy ? "Checking…" : "Check";
+    const body = `
+      ${pageHeader(
+        "Agent",
+        `<p class="kicker">Hunt does not run a chat. Connect a harness you already use, or paste a key.</p>`,
+        `${Btn(checkLabel, { variant: "primary", attrs: `data-agent-check ${disabled}` })} ${CommandHint("hunt agent doctor --json")}`,
+        "agent-header"
+      )}
+      <div class="agent-page">
+        <div class="agent-span">${AgentStatus()}</div>
+        ${banner ? `<div class="agent-span">${banner}</div>` : ""}
+        <section data-primitive="AgentSection" class="section">
+          <h2>Harness</h2>
+          <p class="help">${esc(harnessHelp)}</p>
+          <div data-primitive="HarnessPicker">${harnessChips}</div>
+          ${harness === "paperclip" ? `<p class="help">Paperclip is optional. Hunt users do not need it. Pick this only if you already run Paperclip.</p>` : ""}
+          ${harness === "auto" ? `${CommandHint("curl -fsSL https://opencode.ai/install | bash")}` : ""}
+          ${InstallPreview()}
+          <div class="form-actions">
+            ${Btn("Install", { variant: "primary", attrs: `data-agent-install ${installDisabled}` })}
+            ${CommandHint(installCli)}
+          </div>
+        </section>
+        <section data-primitive="AgentSection" class="section">
+          <h2>Model</h2>
+          <p class="help">${esc(modelHelp(path))}</p>
+          <div data-primitive="HarnessPicker" class="model-paths">${pathChips}</div>
+          <form id="agent-model-form" class="form-grid">
+            ${FormField("Base URL", input("base_url", form.base_url, `placeholder="${path === "local" ? "http://127.0.0.1:8080/v1" : "https://api.x.ai/v1"}" data-agent-field="base_url" ${disabled}`), { name: "base_url", err: form.errors && form.errors.base_url })}
+            ${FormField("Env name", input("api_key_env", form.api_key_env, `placeholder="${path === "local" ? "optional" : "XAI_API_KEY"}" data-agent-field="api_key_env" ${disabled}`), { name: "api_key_env", err: form.errors && form.errors.api_key_env, help: "Name stored in config.yaml, not the key." })}
+            ${FormField("Model", input("model", form.model, `placeholder="model id the server lists" data-agent-field="model" ${disabled}`), { name: "model", err: form.errors && form.errors.model })}
+            <div class="span-2">${SecretField()}</div>
+          </form>
+          ${localNote}
+          <p class="faint no-sub">Hunt does not sell a model subscription. You bring a key you already pay for, or a local server.</p>
+          <div class="form-actions">
+            ${Btn("Save", { variant: "primary", attrs: `data-save-agent ${disabled}` })}
+            ${CommandHint("hunt agent config --json")}
+          </div>
+        </section>
+        <div class="agent-span">${DoctorList()}</div>
+        ${st === "connected" ? `<div class="agent-span">${CommandHint("hunt agent run operator")}<span class="help"> Hunt does not start a chat in this browser.</span></div>` : ""}
+      </div>
+      ${sticky}`;
+    root.innerHTML = shell("settings", badges, body);
+  }
+
+  async function loadAgent(harness) {
+    const q = harness && harness !== "auto" ? `?harness=${encodeURIComponent(harness)}` : "";
+    const payload = await api(`/api/agent${q}`);
+    applyAgentPayload(payload);
+    if (harness) state.agentForm.harness = harness;
+    state.agentError = null;
+  }
+
+  async function loadPreview(harness) {
+    const q = harness && harness !== "auto" ? `?harness=${encodeURIComponent(harness)}` : "";
+    const payload = await api(`/api/agent${q}`);
+    if (state.agent) {
+      state.agent.preview = payload.preview;
+      state.agent.harness_detected = payload.harness_detected;
+    } else {
+      applyAgentPayload(payload);
+    }
+  }
+
+  function validateAgentForm() {
+    const errors = {};
+    const f = state.agentForm || {};
+    const url = (f.base_url || "").trim();
+    if (!url) errors.base_url = "Need a base URL.";
+    else {
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          errors.base_url = "Need an http(s) URL.";
+        } else if (!parsed.hostname) {
+          errors.base_url = "Need an http(s) URL.";
+        }
+      } catch {
+        errors.base_url = "Need an http(s) URL.";
+      }
+    }
+    stashPendingKey();
+    const key = pendingKey;
+    if (key && /^https?:\/\//i.test(key.trim())) {
+      errors.api_key = "That looks like a URL. Put it in Base URL.";
+    }
+    const needKey = f.path === "spacexai" || f.path === "custom";
+    const haveSaved = Boolean(state.agent && state.agent.api_key_set) && !state.agentReplaceKey;
+    if (needKey && !haveSaved && !key) {
+      errors.api_key = "Paste a key, or switch to Local if the server needs none.";
+    }
+    if (!(f.model || "").trim()) {
+      errors.model = "Need a model id (for SpaceXAI, grok-4.5).";
+    }
+    f.errors = errors;
+    return errors;
+  }
+
+  async function saveAgent() {
+    const errors = validateAgentForm();
+    if (Object.keys(errors).length) {
+      render();
+      return;
+    }
+    const f = state.agentForm;
+    state.agentBusy = true;
+    state.agentError = null;
+    render();
+    try {
+      stashPendingKey();
+      const keyToSave = pendingKey;
+      let saved = await api("/api/agent", {
+        method: "PATCH",
+        body: JSON.stringify({
+          harness: f.harness,
+          model: {
+            base_url: f.base_url.trim(),
+            api_key_env: (f.api_key_env || "").trim(),
+            model: f.model.trim(),
+          },
+        }),
+      });
+      if (keyToSave) {
+        const envName = (f.api_key_env || "").trim() || "XAI_API_KEY";
+        saved = await api("/api/agent/secret", {
+          method: "PUT",
+          body: JSON.stringify({ env: envName, value: keyToSave }),
+        });
+        pendingKey = "";
+        state.agentReplaceKey = false;
+        showToast("Key saved");
+      } else {
+        showToast("Saved");
+      }
+      applyAgentPayload(saved);
+      state.agentDirty = false;
+    } catch (err) {
+      state.agentError = err.message || "Cannot run doctor.";
+    } finally {
+      state.agentBusy = false;
+      render();
+    }
+  }
+
+  async function runAgentDoctor() {
+    stashPendingKey();
+    const draft = state.agentForm ? Object.assign({}, state.agentForm) : null;
+    const dirty = state.agentDirty;
+    const replacing = state.agentReplaceKey;
+    state.agentBusy = true;
+    state.agentError = null;
+    render();
+    try {
+      const payload = await api("/api/agent/doctor", { method: "POST", body: "{}" });
+      applyAgentPayload(payload);
+      state.agentDoctor = payload.doctor || payload;
+      if (draft) {
+        state.agentForm = draft;
+        state.agentDirty = dirty;
+        state.agentReplaceKey = replacing;
+      }
+    } catch (err) {
+      state.agentError = err.message === "Cannot reach Hunt HTTP." ? err.message : "Cannot run doctor.";
+      if (draft) {
+        state.agentForm = draft;
+        state.agentDirty = dirty;
+        state.agentReplaceKey = replacing;
+      }
+    } finally {
+      state.agentBusy = false;
+      render();
+    }
+  }
+
+  async function installAgent() {
+    const harness = state.agentForm && state.agentForm.harness;
+    if (!harness || harness === "auto") return;
+    state.agentBusy = true;
+    state.agentError = null;
+    state.dialog = null;
+    render();
+    try {
+      const payload = await api("/api/agent/install", {
+        method: "POST",
+        body: JSON.stringify({ harness }),
+      });
+      applyAgentPayload(payload);
+      showToast(`Installed for ${harnessLabel(harness)}`);
+    } catch (err) {
+      state.agentError = err.message || "Install failed.";
+    } finally {
+      state.agentBusy = false;
+      render();
+    }
+  }
+
+  async function renderSettings(root, badges) {
+    try {
+      if (!state.agentForm) {
+        await loadAgent();
+      }
+    } catch (err) {
+      root.innerHTML = shell("settings", badges, ErrorBanner(err.message));
+      return;
+    }
+    renderAgentPage(root, badges);
+  }
+
   async function badges() {
     const out = { board: 0, inbox: 0, sources: 0, jobs: 0 };
     try {
@@ -1747,6 +2183,16 @@
       state.knowledge = null;
       state.profileConflict = null;
     }
+    if (prev.name === "settings" && state.route.name !== "settings") {
+      state.agentDirty = false;
+      state.agent = null;
+      state.agentDoctor = null;
+      state.agentForm = null;
+      state.agentBusy = false;
+      state.agentReplaceKey = false;
+      state.agentError = null;
+      pendingKey = "";
+    }
     try {
       state.meta = await api("/api/meta");
     } catch (err) {
@@ -1773,6 +2219,7 @@
       if (r.name === "sources") return await renderSources(root, b);
       if (r.name === "jobs") return await renderJobs(root, b);
       if (r.name === "profile") return await renderProfile(root, b);
+      if (r.name === "settings") return await renderSettings(root, b);
       root.innerHTML = shell(
         "board",
         b,
@@ -1959,6 +2406,26 @@
           alert(err.message);
         }
         render();
+      } else if (action === "agent-install") {
+        await installAgent();
+      } else if (action.startsWith("agent-remove-key:")) {
+        const env = action.slice("agent-remove-key:".length);
+        state.agentBusy = true;
+        render();
+        try {
+          const payload = await api(`/api/agent/secret?env=${encodeURIComponent(env)}`, {
+            method: "DELETE",
+          });
+          pendingKey = "";
+          state.agentReplaceKey = false;
+          applyAgentPayload(payload);
+          showToast("Key removed");
+        } catch (err) {
+          state.agentError = err.message;
+        } finally {
+          state.agentBusy = false;
+          render();
+        }
       }
       return;
     }
@@ -1995,6 +2462,98 @@
     }
     if (ev.target.closest("[data-save-profile-tab]")) {
       await saveCurrentProfileTab();
+      return;
+    }
+    if (ev.target.closest("[data-save-agent]")) {
+      ev.preventDefault();
+      await saveAgent();
+      return;
+    }
+    if (ev.target.closest("[data-agent-check]")) {
+      ev.preventDefault();
+      await runAgentDoctor();
+      return;
+    }
+    if (ev.target.closest("[data-agent-retry]")) {
+      ev.preventDefault();
+      await runAgentDoctor();
+      return;
+    }
+    const harnessChip = ev.target.closest("[data-agent-harness]");
+    if (harnessChip && !harnessChip.disabled) {
+      const id = harnessChip.getAttribute("data-agent-harness");
+      stashPendingKey();
+      if (state.agentForm) state.agentForm.harness = id;
+      state.agentDirty = true;
+      try {
+        await loadPreview(id);
+      } catch (err) {
+        state.agentError = err.message;
+      }
+      render();
+      return;
+    }
+    const pathChip = ev.target.closest("[data-model-path]");
+    if (pathChip && !pathChip.disabled && state.agentForm) {
+      const id = pathChip.getAttribute("data-model-path");
+      stashPendingKey();
+      state.agentForm.path = id;
+      if (id === "spacexai") {
+        state.agentForm.base_url = SPACEXAI.base_url;
+        state.agentForm.api_key_env = SPACEXAI.api_key_env;
+        if (!state.agentForm.model || state.agentForm.model === LOCAL_MODEL.model) {
+          state.agentForm.model = SPACEXAI.model;
+        }
+      } else if (id === "local") {
+        state.agentForm.base_url = LOCAL_MODEL.base_url;
+        state.agentForm.api_key_env = "";
+        if (!state.agentForm.model || state.agentForm.model === SPACEXAI.model) {
+          state.agentForm.model = LOCAL_MODEL.model;
+        }
+      }
+      state.agentDirty = true;
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-agent-install]")) {
+      const harness = state.agentForm && state.agentForm.harness;
+      if (!harness || harness === "auto") return;
+      const writes = (state.agent && state.agent.preview && state.agent.preview.writes) || [];
+      const items = writes.map((w) => `<li><code>${esc(w.path)}</code></li>`).join("");
+      state.dialog = {
+        kind: "confirm",
+        title: `Write Hunt into ${harnessLabel(harness)}?`,
+        html: `<p>Hunt will not start a chat in this browser.</p><ul class="install-confirm-paths">${items}</ul>`,
+        ok: "Install",
+        cancel: "Back",
+        action: "agent-install",
+      };
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-replace-key]")) {
+      state.agentReplaceKey = true;
+      pendingKey = "";
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-cancel-replace-key]")) {
+      state.agentReplaceKey = false;
+      pendingKey = "";
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-remove-key]")) {
+      const env = (state.agentForm && state.agentForm.api_key_env) || "XAI_API_KEY";
+      state.dialog = {
+        kind: "confirm",
+        title: "Remove key",
+        body: `Remove the saved key from secrets.env? Hunt will not be able to call the hosted model.`,
+        ok: "Remove key",
+        danger: true,
+        action: `agent-remove-key:${env}`,
+      };
+      render();
       return;
     }
     if (ev.target.closest("[data-conflict-reload]")) {
@@ -2246,6 +2805,10 @@
       ev.preventDefault();
       await saveProfile();
     }
+    if (form.id === "agent-model-form") {
+      ev.preventDefault();
+      await saveAgent();
+    }
   });
 
   document.addEventListener("change", (ev) => {
@@ -2290,6 +2853,15 @@
       const shellEl = document.querySelector("[data-primitive=AppShell]");
       if (shellEl) shellEl.classList.add("profile-dirty");
     }
+    if (ev.target.hasAttribute("data-agent-field") && state.agentForm) {
+      const field = ev.target.getAttribute("data-agent-field");
+      state.agentForm[field] = ev.target.value;
+      state.agentDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("agent-dirty");
+    }
     if (ev.target.id === "status-select") {
       const value = ev.target.value;
       const id = state.route.id;
@@ -2333,6 +2905,23 @@
       const shellEl = document.querySelector("[data-primitive=AppShell]");
       if (shellEl) shellEl.classList.add("profile-dirty");
     }
+    if (ev.target.hasAttribute("data-agent-field") && state.agentForm) {
+      const field = ev.target.getAttribute("data-agent-field");
+      state.agentForm[field] = ev.target.value;
+      state.agentDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("agent-dirty");
+    }
+    if (ev.target.name === "api_key") {
+      pendingKey = ev.target.value;
+      state.agentDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("agent-dirty");
+    }
   });
 
   document.addEventListener("keydown", (ev) => {
@@ -2369,6 +2958,7 @@
       if (ev.key === "s") go("/sources");
       if (ev.key === "j") go("/jobs");
       if (ev.key === "p") go("/profile");
+      if (ev.key === "a") go("/settings");
       return;
     }
     if (ev.key === "n" && state.route.name === "board") {

@@ -14,6 +14,11 @@ from hunt.core.workspace import resolve_data_dir
 from hunt.agent.config import RECORD_NAME, resolve_harness, resolve_roles
 from hunt.agent.packs import packs_for_roles
 
+PAPERCLIP_PREVIEW_NOTE = (
+    "Import hunt-operator and hunt-screener as company skills. "
+    "Paperclip is optional — Hunt users do not need it."
+)
+
 
 def hunt_mcp_command() -> tuple[str, list[str]]:
     hunt_bin = shutil.which("hunt")
@@ -228,7 +233,50 @@ def _record_install(
     return _write_json(path, payload)
 
 
-def install(
+def planned_writes(
+    harness: str,
+    *,
+    root: Path,
+    home: Path,
+    roles: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Paths ``install`` would write. Paperclip is a note, not a file list."""
+    name = resolve_harness(harness)
+    if name == "paperclip":
+        return [
+            {
+                "path": PAPERCLIP_PREVIEW_NOTE,
+                "kind": "note",
+                "exists": False,
+            }
+        ]
+    files: list[tuple[Path, str]] = []
+    if name == "claude":
+        files.append((root / ".mcp.json", "mcp"))
+        skill_root = root / ".claude" / "skills"
+    elif name == "cursor":
+        files.append((root / ".cursor" / "mcp.json", "mcp"))
+        skill_root = root / ".cursor" / "skills"
+    elif name == "codex":
+        files.append((home / ".codex" / "config.toml", "config"))
+        skill_root = home / ".codex" / "skills"
+    elif name == "opencode":
+        files.append((root / "opencode.json", "mcp"))
+        skill_root = root / ".opencode" / "skills"
+    elif name == "openclaw":
+        files.append((root / ".openclaw" / "openclaw.json", "mcp"))
+        skill_root = root / ".openclaw" / "skills"
+    else:
+        return []
+    for _role, pack, _src in packs_for_roles(roles):
+        files.append((skill_root / pack / "SKILL.md", "skill"))
+    return [
+        {"path": str(path), "kind": kind, "exists": path.is_file()}
+        for path, kind in files
+    ]
+
+
+def preview(
     *,
     harness: str,
     data_dir: str | Path | None = None,
@@ -239,9 +287,45 @@ def install(
     name = resolve_harness(harness)
     roles = resolve_roles(role)
     workspace = resolve_data_dir(data_dir)
-    project = Path(root or os.getcwd()).expanduser().resolve()
+    project = Path(root or workspace).expanduser().resolve()
+    user_home = Path(home or Path.home()).expanduser().resolve()
+    writes = planned_writes(name, root=project, home=user_home, roles=roles)
+    return {
+        "harness": name,
+        "roles": list(roles),
+        "writes": writes,
+        "root": str(project),
+        "home": str(user_home),
+        "never_apply": True,
+    }
+
+
+def install(
+    *,
+    harness: str,
+    data_dir: str | Path | None = None,
+    root: str | Path | None = None,
+    home: str | Path | None = None,
+    role: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    name = resolve_harness(harness)
+    roles = resolve_roles(role)
+    workspace = resolve_data_dir(data_dir)
+    project = Path(root or workspace).expanduser().resolve()
     user_home = Path(home or Path.home()).expanduser().resolve()
     spec = mcp_spec(workspace)
+    if dry_run:
+        writes = planned_writes(name, root=project, home=user_home, roles=roles)
+        return {
+            "harness": name,
+            "roles": list(roles),
+            "files": [row["path"] for row in writes],
+            "writes": writes,
+            "mcp": spec,
+            "note": "dry-run; no files written",
+            "never_apply": True,
+        }
     files = _INSTALLERS[name](project, user_home, spec, roles)
     record = _record_install(
         workspace, harness=name, root=project, home=user_home, roles=roles, files=files

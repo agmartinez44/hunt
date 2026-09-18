@@ -50,7 +50,7 @@ from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.worker import drain, run_one
-from hunt.agent.config import HARNESSES, OPENCODE_INSTALL_COMMAND
+from hunt.agent.config import HARNESS_CHOICES, HARNESSES, OPENCODE_INSTALL_COMMAND
 from hunt.core.workspace import Workspace
 
 UNSET = object()
@@ -869,6 +869,7 @@ def cmd_agent_install(args: argparse.Namespace) -> None:
         root=getattr(args, "root", None),
         home=getattr(args, "home", None),
         role=getattr(args, "role", None),
+        dry_run=bool(getattr(args, "dry_run", False)),
     )
     if args.json:
         _dump_json(result)
@@ -877,14 +878,109 @@ def cmd_agent_install(args: argparse.Namespace) -> None:
         {
             "harness": result["harness"],
             "roles": ", ".join(result["roles"]),
-            "files": len(result["files"]),
+            "files": len(result.get("files") or []),
             "note": result["note"],
         }
     )
+    rows = result.get("writes") or [{"path": path} for path in result.get("files") or []]
     print_table(
-        [{"path": path} for path in result["files"]],
-        [("path", "WROTE")],
+        [{"path": row["path"] if isinstance(row, dict) else row} for row in rows],
+        [("path", "DRY-RUN" if getattr(args, "dry_run", False) else "WROTE")],
     )
+
+
+def cmd_agent_status(args: argparse.Namespace) -> None:
+    from hunt.agent.status import agent_status
+
+    with _open(args) as ws:
+        payload = agent_status(
+            ws,
+            harness=getattr(args, "harness", None),
+            root=getattr(args, "root", None),
+            home=getattr(args, "home", None),
+        )
+    if args.json:
+        _dump_json(payload)
+        return
+    print_kv(
+        {
+            "harness": payload["harness"],
+            "harness_detected": payload.get("harness_detected"),
+            "base_url": payload["model"]["base_url"],
+            "model": payload["model"]["model"],
+            "api_key_env": payload["model"].get("api_key_env"),
+            "api_key_set": payload["api_key_set"],
+            "state": payload["state"],
+        }
+    )
+
+
+def cmd_agent_config(args: argparse.Namespace) -> None:
+    from hunt.agent.status import agent_status, save_agent
+
+    harness = getattr(args, "harness", None)
+    model: dict[str, Any] = {}
+    if getattr(args, "base_url", None) is not None:
+        model["base_url"] = args.base_url
+    if getattr(args, "api_key_env", None) is not None:
+        model["api_key_env"] = args.api_key_env
+    if getattr(args, "model", None) is not None:
+        model["model"] = args.model
+    with _open(args) as ws:
+        if harness is None and not model:
+            payload = agent_status(
+                ws,
+                root=getattr(args, "root", None),
+                home=getattr(args, "home", None),
+            )
+        else:
+            payload = save_agent(
+                ws,
+                harness=harness,
+                model=model or None,
+                root=getattr(args, "root", None),
+                home=getattr(args, "home", None),
+            )
+    if args.json:
+        _dump_json(payload)
+        return
+    print_kv(
+        {
+            "harness": payload["harness"],
+            "base_url": payload["model"]["base_url"],
+            "model": payload["model"]["model"],
+            "api_key_env": payload["model"].get("api_key_env"),
+            "api_key_set": payload["api_key_set"],
+            "state": payload.get("state"),
+        }
+    )
+
+
+def cmd_agent_secret_set(args: argparse.Namespace) -> None:
+    from hunt.agent.status import set_agent_secret
+
+    value = getattr(args, "value", None)
+    if value is None:
+        value = sys.stdin.read()
+        if value.endswith("\n"):
+            value = value[:-1]
+    with _open(args) as ws:
+        payload = set_agent_secret(ws, args.env, value)
+    if args.json:
+        _dump_json({"api_key_set": payload["api_key_set"], "env": args.env})
+        return
+    print_kv({"env": args.env, "api_key_set": payload["api_key_set"]})
+
+
+def cmd_agent_secret_unset(args: argparse.Namespace) -> None:
+    from hunt.agent.status import unset_agent_secret
+
+    with _open(args) as ws:
+        payload = unset_agent_secret(ws, args.env)
+    if args.json:
+        _dump_json({"api_key_set": payload["api_key_set"], "env": args.env})
+        return
+    print_kv({"env": args.env, "api_key_set": payload["api_key_set"]})
 
 
 def cmd_agent_doctor(args: argparse.Namespace) -> None:
@@ -1269,7 +1365,50 @@ def build_parser() -> argparse.ArgumentParser:
         "--home",
         help="Override home for user-level files (Codex ~/.codex)",
     )
+    p_agent_in.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List files that would be written without writing them",
+    )
     p_agent_in.set_defaults(func=cmd_agent_install)
+    p_agent_status = agent_verbs.add_parser(
+        "status",
+        help="Harness + model settings (no secret values)",
+    )
+    p_agent_status.add_argument(
+        "--harness",
+        choices=list(HARNESSES),
+        help="Preview writes for this harness",
+    )
+    p_agent_status.add_argument("--root", help="Project directory to scan")
+    p_agent_status.add_argument("--home", help="Override home for user-level files")
+    p_agent_status.set_defaults(func=cmd_agent_status)
+    p_agent_cfg = agent_verbs.add_parser(
+        "config",
+        help="Get or set agent.harness / agent.model (keys stay in secrets.env)",
+    )
+    p_agent_cfg.add_argument("--harness", choices=list(HARNESS_CHOICES))
+    p_agent_cfg.add_argument("--base-url", dest="base_url")
+    p_agent_cfg.add_argument("--api-key-env", dest="api_key_env")
+    p_agent_cfg.add_argument("--model")
+    p_agent_cfg.add_argument("--root", help="Project directory to scan after save")
+    p_agent_cfg.add_argument("--home", help="Override home for user-level files")
+    p_agent_cfg.set_defaults(func=cmd_agent_config)
+    p_agent_secret = agent_verbs.add_parser(
+        "secret",
+        help="Write a model key to secrets.env (never echoes the value)",
+    )
+    secret_verbs = p_agent_secret.add_subparsers(dest="secret_verb", required=True)
+    p_secret_set = secret_verbs.add_parser("set", help="Set env=value in secrets.env")
+    p_secret_set.add_argument("--env", required=True)
+    p_secret_set.add_argument(
+        "--value",
+        help="Secret value (prefer stdin). Never logged.",
+    )
+    p_secret_set.set_defaults(func=cmd_agent_secret_set)
+    p_secret_unset = secret_verbs.add_parser("unset", help="Remove a key from secrets.env")
+    p_secret_unset.add_argument("--env", required=True)
+    p_secret_unset.set_defaults(func=cmd_agent_secret_unset)
     p_agent_doc = agent_verbs.add_parser(
         "doctor",
         help="Check workspace, MCP, skills, and GET {base_url}/models",

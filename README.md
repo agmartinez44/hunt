@@ -101,7 +101,8 @@ Golden test (proves the unverified bullet stays out of the PDF):
 
 Hunt does **not** run a ReAct loop, session manager, or tool dispatcher.
 You bring a harness you already use, or paste a token / local OpenAI-compat
-URL and exec the documented default runner (OpenCode).
+URL and exec the documented default runner (OpenCode). The HTTP UI exposes
+the same install / key / local-URL path at **Agent** → `/settings`.
 
 ```bash
 # 1. Point $HUNT_DATA at a workspace copy, then install MCP + skills:

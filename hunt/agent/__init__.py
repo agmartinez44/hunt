@@ -12,8 +12,9 @@ from hunt.agent.config import (
     models_url,
 )
 from hunt.agent.doctor import doctor
-from hunt.agent.install import install
+from hunt.agent.install import install, preview
 from hunt.agent.run import prepare_run
+from hunt.agent.status import agent_status, save_agent
 
 __all__ = [
     "DEFAULT_API_KEY_ENV",
@@ -24,8 +25,11 @@ __all__ = [
     "ROLES",
     "RUN_ORDER",
     "agent_model",
+    "agent_status",
     "doctor",
     "install",
     "models_url",
     "prepare_run",
+    "preview",
+    "save_agent",
 ]

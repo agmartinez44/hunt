@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import yaml
 
 from hunt.core.errors import ValidationError
 from hunt.core.secrets import secret
@@ -130,3 +134,102 @@ def small_local_warning(model_name: str, base_url: str, discovered: list[str] | 
         "Screening quality may still want Grok or Claude; "
         "this local model looks small (Gemma E4B class)."
     )
+
+
+def is_local_base_url(base_url: str) -> bool:
+    host = (urlparse(base_url or "").hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+
+
+def validate_base_url(base_url: str | None) -> str:
+    raw = (base_url or "").strip()
+    if not raw:
+        raise ValidationError("Need a base URL.")
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValidationError("Need an http(s) URL.")
+    return raw.rstrip("/")
+
+
+def validate_env_name(env_name: str | None, *, allow_empty: bool = True) -> str:
+    raw = "" if env_name is None else str(env_name).strip()
+    if not raw:
+        if allow_empty:
+            return ""
+        raise ValidationError("env name must be an identifier like XAI_API_KEY")
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", raw):
+        raise ValidationError("env name must be an identifier like XAI_API_KEY")
+    return raw
+
+
+def validate_model_id(model: str | None) -> str:
+    raw = (model or "").strip()
+    if not raw:
+        raise ValidationError("Need a model id (for SpaceXAI, grok-4.5).")
+    return raw
+
+
+def write_agent_section(path: Path, agent: dict[str, Any]) -> None:
+    """Replace the top-level ``agent:`` block. Does not write secret values."""
+    dumped = yaml.safe_dump({"agent": agent}, sort_keys=False, allow_unicode=True)
+    if not dumped.endswith("\n"):
+        dumped += "\n"
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    lines = text.splitlines(keepends=True)
+    start: int | None = None
+    end = len(lines)
+    for i, line in enumerate(lines):
+        stripped = line.rstrip("\n")
+        if stripped == "agent:" or stripped.startswith("agent:"):
+            if start is None:
+                start = i
+            continue
+        if start is None:
+            continue
+        if not stripped or stripped.lstrip().startswith("#"):
+            continue
+        if line[:1] in " \t":
+            continue
+        end = i
+        break
+    if start is None:
+        prefix = text
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        path.write_text(prefix + dumped, encoding="utf-8")
+        return
+    path.write_text("".join(lines[:start]) + dumped + "".join(lines[end:]), encoding="utf-8")
+
+
+def save_agent_config(
+    ws: Workspace,
+    *,
+    harness: str | None = None,
+    model: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    current = agent_section(ws)
+    next_harness = agent_harness(ws)
+    if harness is not None:
+        value = str(harness).strip().lower()
+        if value not in HARNESS_CHOICES:
+            raise ValidationError(
+                "Unknown harness "
+                f"{harness!r}. Use one of: " + ", ".join(HARNESS_CHOICES)
+            )
+        next_harness = value
+    current_model = agent_model(ws)
+    next_model = dict(current_model)
+    if isinstance(model, dict):
+        if "base_url" in model:
+            next_model["base_url"] = validate_base_url(model.get("base_url"))
+        if "api_key_env" in model:
+            next_model["api_key_env"] = validate_env_name(model.get("api_key_env"))
+        if "model" in model:
+            next_model["model"] = validate_model_id(model.get("model"))
+    payload: dict[str, Any] = {"harness": next_harness, "model": next_model}
+    for key, value in current.items():
+        if key not in payload:
+            payload[key] = value
+    write_agent_section(ws.root / "config.yaml", payload)
+    ws.reload_config()
+    return agent_model(ws)

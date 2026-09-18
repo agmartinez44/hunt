@@ -607,6 +607,96 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             integrity = update_integrity(ws, body)
             return {"integrity": integrity, "revision": _rev(ws, INTEGRITY_FILE)}
 
+    @app.get("/api/agent")
+    def api_agent_status(
+        harness: str | None = None, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        from hunt.agent.status import agent_status
+
+        with open_ws() as ws:
+            return agent_status(ws, harness=harness)
+
+    @app.patch("/api/agent")
+    async def api_agent_config(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        from hunt.agent.status import save_agent
+
+        body = _json_object(await request.json())
+        unknown = set(body) - {"harness", "model"}
+        if unknown:
+            raise ValidationError(f"unknown agent fields: {sorted(unknown)}")
+        model = body.get("model")
+        if model is not None and not isinstance(model, dict):
+            raise ValidationError("model must be an object")
+        if isinstance(model, dict):
+            unknown_model = set(model) - {"base_url", "api_key_env", "model"}
+            if unknown_model:
+                raise ValidationError(f"unknown model fields: {sorted(unknown_model)}")
+        with open_ws() as ws:
+            return save_agent(
+                ws, harness=body.get("harness"), model=model
+            )
+
+    @app.post("/api/agent/install")
+    async def api_agent_install(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        from hunt.agent.status import install_and_status
+
+        body = _json_object(await request.json())
+        harness = body.get("harness")
+        if not harness:
+            raise ValidationError("harness is required")
+        with open_ws() as ws:
+            return install_and_status(
+                ws,
+                str(harness),
+                role=body.get("role"),
+            )
+
+    @app.post("/api/agent/doctor")
+    async def api_agent_doctor(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        from hunt.agent.status import agent_status
+
+        raw = await request.body()
+        body = json.loads(raw) if raw else {}
+        if body and not isinstance(body, dict):
+            raise ValidationError("expected a JSON object")
+        timeout = 3.0
+        if isinstance(body, dict) and body.get("timeout") is not None:
+            timeout = float(body["timeout"])
+        with open_ws() as ws:
+            return agent_status(ws, run_check=True, timeout=timeout)
+
+    @app.put("/api/agent/secret")
+    async def api_agent_secret_set(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        from hunt.agent.status import set_agent_secret
+
+        body = _json_object(await request.json())
+        env_name = body.get("env")
+        if not env_name:
+            raise ValidationError("env is required")
+        if "value" not in body:
+            raise ValidationError("value is required")
+        with open_ws() as ws:
+            return set_agent_secret(ws, str(env_name), str(body.get("value") or ""))
+
+    @app.delete("/api/agent/secret")
+    def api_agent_secret_unset(
+        env: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        from hunt.agent.status import unset_agent_secret
+
+        if not env:
+            raise ValidationError("env is required")
+        with open_ws() as ws:
+            return unset_agent_secret(ws, env)
+
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

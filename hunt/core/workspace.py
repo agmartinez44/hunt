@@ -59,6 +59,13 @@ class Workspace:
         (root / "attachments" / "applications").mkdir(parents=True, exist_ok=True)
         return cls(root=root, config=loaded, conn=conn)
 
+    def reload_config(self) -> None:
+        config_path = self.root / "config.yaml"
+        loaded = yaml.safe_load(config_path.read_text()) or {}
+        if not isinstance(loaded, dict):
+            raise WorkspaceError(f"{config_path} must be a YAML mapping")
+        self.config = loaded
+
     def close(self) -> None:
         self.conn.close()
 

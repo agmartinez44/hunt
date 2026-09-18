@@ -12,19 +12,91 @@ from typing import Any
 from hunt.core.secrets import secret
 from hunt.core.workspace import Workspace
 
+from hunt.core.secrets import secret_is_set
+
 from hunt.agent.config import (
     RECORD_NAME,
     ROLE_PACKS,
     agent_model,
+    is_local_base_url,
     models_url,
     small_local_warning,
 )
 
+LAST_DOCTOR = "agent-doctor.json"
+CHECK_LABELS = {
+    "workspace": "Workspace readable",
+    "mcp": "Hunt MCP is installed in a harness",
+    "skill": "hunt-operator skill is installed",
+    "harness": "Harness files present",
+    "models": "{url} answered",
+    "key": "{env} is set in secrets.env",
+    "quality": (
+        "Local model — wiring is enough. "
+        "Screening quality may still want Grok or Claude."
+    ),
+}
+
+_SECRET_FIELD_NAMES = {
+    "api_key",
+    "secret",
+    "password",
+    "token",
+    "value",
+    "authorization",
+}
+_SECRET_FIELD_KEEP = {"api_key_env", "api_key_set", "api_key_present"}
+
 
 def _check(cid: str, ok: bool, detail: str, **extra: Any) -> dict[str, Any]:
     row = {"id": cid, "ok": ok, "detail": detail}
+    if "label" not in extra:
+        row["label"] = CHECK_LABELS.get(cid, detail)
     row.update(extra)
     return row
+
+
+def _is_secret_field(key: str) -> bool:
+    lowered = key.lower()
+    if lowered in _SECRET_FIELD_KEEP:
+        return False
+    if lowered in _SECRET_FIELD_NAMES:
+        return True
+    return lowered.endswith("_secret") or lowered.endswith("_token")
+
+
+def strip_secrets(payload: Any) -> Any:
+    """Drop secret values from a doctor/status payload. Keep env names/flags."""
+    if isinstance(payload, dict):
+        return {
+            key: strip_secrets(value)
+            for key, value in payload.items()
+            if not _is_secret_field(str(key))
+        }
+    if isinstance(payload, list):
+        return [strip_secrets(item) for item in payload]
+    return payload
+
+
+def load_last_doctor(ws: Workspace) -> dict[str, Any] | None:
+    path = ws.root / LAST_DOCTOR
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return strip_secrets(payload)
+
+
+def save_last_doctor(ws: Workspace, report: dict[str, Any]) -> None:
+    path = ws.root / LAST_DOCTOR
+    path.write_text(
+        json.dumps(strip_secrets(report), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _json_load(path: Path) -> dict[str, Any]:
@@ -185,7 +257,7 @@ def doctor(
     home: str | Path | None = None,
     timeout: float = 3.0,
 ) -> dict[str, Any]:
-    project = Path(root or os.getcwd()).expanduser().resolve()
+    project = Path(root or ws.root).expanduser().resolve()
     user_home = Path(home or Path.home()).expanduser().resolve()
     checks: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -198,6 +270,7 @@ def doctor(
             "workspace",
             readable,
             str(ws.root) if readable else f"workspace not readable: {ws.root}",
+            label="Workspace readable" if readable else f"workspace not readable: {ws.root}",
         )
     )
 
@@ -214,6 +287,11 @@ def doctor(
             mcp_ok,
             ", ".join(str(p) for p in mcp_files) if mcp_ok else "no Hunt MCP entry in harness config",
             paths=[str(p) for p in mcp_files],
+            label=(
+                "Hunt MCP is installed in a harness"
+                if mcp_ok
+                else "no Hunt MCP entry in harness config"
+            ),
         )
     )
 
@@ -228,22 +306,51 @@ def doctor(
             skill_ok,
             ", ".join(str(p) for p in skill_files) if skill_ok else "no Hunt role skill installed",
             paths=[str(p) for p in skill_files],
+            label=(
+                "hunt-operator skill is installed"
+                if skill_ok
+                else "hunt-operator skill is not installed"
+            ),
         )
     )
 
     model = agent_model(ws)
     key_env = model.get("api_key_env") or ""
     api_key = secret(ws.secrets(), key_env) if key_env else None
+    key_set = bool(api_key) if key_env else False
+    if key_env:
+        checks.append(
+            _check(
+                "key",
+                key_set,
+                key_env if key_set else f"{key_env} is not set",
+                api_key_env=key_env,
+                label=(
+                    f"{key_env} is set in secrets.env"
+                    if key_set
+                    else f"{key_env} is not set. Paste a key or export it before running Hunt."
+                ),
+            )
+        )
     ping = ping_models(model["base_url"], api_key, timeout=timeout)
+    local = is_local_base_url(model["base_url"])
+    models_ok = bool(ping["ok"])
+    if models_ok:
+        models_label = f"{ping['url']} answered"
+    elif local:
+        models_label = f"No answer from GET {ping['url']}. Is llama.cpp running?"
+    else:
+        models_label = f"No answer from GET {ping['url']}."
     checks.append(
         _check(
             "models",
-            bool(ping["ok"]),
+            models_ok,
             f"{ping['url']} — {ping['detail']}",
             url=ping["url"],
             models=ping.get("models") or [],
             api_key_env=key_env or None,
             api_key_present=bool(api_key),
+            label=models_label,
         )
     )
     warn = small_local_warning(
@@ -251,16 +358,31 @@ def doctor(
     )
     if warn:
         warnings.append(warn)
+        checks.append(
+            _check(
+                "quality",
+                True,
+                warn,
+                severity="note",
+                label=CHECK_LABELS["quality"],
+            )
+        )
 
-    ok = all(item["ok"] for item in checks)
-    return {
+    ok = all(item["ok"] for item in checks if item.get("severity") != "note")
+    report = {
         "ok": ok,
+        "state": "connected" if ok else "fail",
         "checks": checks,
         "warnings": warnings,
+        "api_key_set": bool(key_env and secret_is_set(ws.root, key_env)),
         "model": {
             "base_url": model["base_url"],
             "api_key_env": key_env or None,
             "model": model["model"],
+            "local": local,
         },
         "never_apply": True,
     }
+    cleaned = strip_secrets(report)
+    save_last_doctor(ws, cleaned)
+    return cleaned

@@ -483,3 +483,137 @@ def test_profile_editor_round_trip_conflict_and_honesty(client):
     assert confirmed.status_code == 200
     assert confirmed.json()["position"]["verified"] is True
     assert confirmed.json()["position"]["employer"] == "WidgetCorp"
+
+
+def test_connect_agent_settings_ui_contract():
+    """AGU-23 / AGU-22: Agent is AppBar-only; no chat panel; no fifth tab."""
+    static = ROOT / "hunt" / "http" / "static"
+    js = (static / "app.js").read_text()
+    css = (static / "hunt.css").read_text()
+    blob = js + css
+    assert 'if (path === "/settings")' in js
+    assert 'NavItem("/settings", "Agent"' in js
+    assert '["/settings", "Agent"' not in js
+    assert 'data-primitive="AppTabBar"' in js
+    assert 'data-primitive="AgentStatus"' in js
+    assert 'data-primitive="HarnessPicker"' in js
+    assert 'data-primitive="InstallPreview"' in js
+    assert 'data-primitive="DoctorList"' in js
+    assert 'data-primitive="SecretField"' in js
+    assert 'data-primitive="AgentSection"' in js
+    assert "Hunt does not run a chat" in js
+    assert "Hunt does not sell a model subscription" in js
+    assert "ChatPanel" not in blob
+    assert "Ask Hunt" not in blob
+    assert "state.apiKey" not in js
+    assert "clears_floor" not in blob
+    assert "Easy Apply" not in blob
+    assert 'type="password" autocomplete="off" placeholder="xai-…"' in js
+    assert "hunt agent doctor --json" in js
+    assert "hunt agent run operator" in js
+    assert "agent-dirty" in js
+    assert "[data-primitive=\"AgentStatus\"]" in css
+    assert "[data-primitive=\"DoctorList\"]" in css
+    assert "[data-primitive=\"SecretField\"]" in css
+
+
+def test_agent_http_secret_never_returned_and_local_round_trip(client):
+    """Token stays in secrets.env; GET/CLI doctor agree on the local URL."""
+    http, data, env = client
+    page = http.get("/settings")
+    assert page.status_code == 200
+    assert "Hunt" in page.text
+    unknown = http.get("/settings/nope")
+    assert unknown.status_code == 200
+
+    got = http.get("/api/agent")
+    assert got.status_code == 200, got.text
+    payload = got.json()
+    dumped = json.dumps(payload)
+    assert "api_key" not in dumped or "api_key_env" in dumped
+    assert "api_key_set" in payload
+    assert payload["api_key_set"] is False
+    assert payload["model"]["base_url"] == "https://api.x.ai/v1"
+    assert payload["model"]["api_key_env"] == "XAI_API_KEY"
+    assert payload["model"]["model"] == "grok-4.5"
+    assert payload["never_apply"] is True
+    assert "xai-" not in dumped.lower()
+    blob = json.dumps(payload).lower()
+    assert "sk-" not in blob
+
+    secret_value = "xai-jane-doe-test-key-not-real"
+    saved = http.put(
+        "/api/agent/secret",
+        json={"env": "XAI_API_KEY", "value": secret_value},
+    )
+    assert saved.status_code == 200, saved.text
+    saved_body = saved.json()
+    assert saved_body["api_key_set"] is True
+    assert secret_value not in json.dumps(saved_body)
+    secrets_text = (data / "secrets.env").read_text(encoding="utf-8")
+    assert "XAI_API_KEY=" in secrets_text
+    assert secret_value in secrets_text
+    cfg = (data / "config.yaml").read_text(encoding="utf-8")
+    assert secret_value not in cfg
+
+    again = http.get("/api/agent")
+    assert again.json()["api_key_set"] is True
+    assert secret_value not in json.dumps(again.json())
+    assert again.json()["model"]["api_key_env"] == "XAI_API_KEY"
+
+    local = http.patch(
+        "/api/agent",
+        json={
+            "harness": "claude",
+            "model": {
+                "base_url": "http://127.0.0.1:9/v1",
+                "api_key_env": "",
+                "model": "gemma-e4b",
+            },
+        },
+    )
+    assert local.status_code == 200, local.text
+    local_body = local.json()
+    assert local_body["model"]["base_url"] == "http://127.0.0.1:9/v1"
+    assert local_body["model"]["api_key_env"] in ("", None)
+    assert local_body["doctor"]["ok"] is False
+    assert local_body["state"] == "fail"
+    models = next(c for c in local_body["doctor"]["checks"] if c["id"] == "models")
+    assert models["ok"] is False
+    assert "127.0.0.1:9" in (models["label"] or models["detail"])
+    assert secret_value not in json.dumps(local_body)
+
+    reloaded = http.get("/api/agent")
+    assert reloaded.json()["model"]["base_url"] == "http://127.0.0.1:9/v1"
+
+    _, cli = _json(["agent", "status"], env)
+    assert cli["model"]["base_url"] == "http://127.0.0.1:9/v1"
+    run, _err = _json(
+        ["agent", "doctor", "--root", str(data), "--timeout", "1"],
+        env,
+        check=False,
+    )
+    doctor = json.loads(run.stdout)
+    assert doctor["ok"] is False
+    assert doctor["model"]["base_url"] == "http://127.0.0.1:9/v1"
+    assert doctor["model"].get("local") is True
+    assert secret_value not in json.dumps(doctor)
+
+    preview = http.get("/api/agent?harness=claude")
+    writes = preview.json()["preview"]["writes"]
+    assert writes
+    assert any(row["kind"] == "mcp" for row in writes)
+    dry = _json(
+        ["agent", "install", "--harness", "claude", "--dry-run", "--root", str(data)],
+        env,
+    )[1]
+    assert dry["writes"]
+    assert not (data / ".mcp.json").exists()
+
+    installed = http.post("/api/agent/install", json={"harness": "claude"})
+    assert installed.status_code == 200, installed.text
+    assert (data / ".mcp.json").is_file()
+    assert (data / ".claude" / "skills" / "hunt-operator" / "SKILL.md").is_file()
+    mcp = json.loads((data / ".mcp.json").read_text(encoding="utf-8"))
+    assert mcp["mcpServers"]["hunt"]["env"]["HUNT_DATA"] == str(data.resolve())
+    assert secret_value not in json.dumps(mcp)

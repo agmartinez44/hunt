@@ -407,3 +407,69 @@ def test_mcp_agent_tools_install_without_exec(workspace, tmp_path: Path):
     run_payload = json.loads(run_reply["result"]["content"][0]["text"])
     assert run_payload["never_apply"] is True
     assert "command" in run_payload or "install" in run_payload
+
+
+def test_agent_config_and_secret_cli(workspace):
+    data, env = workspace
+    _, status = _json(["agent", "status"], env)
+    assert status["harness"] == "auto"
+    assert status["api_key_set"] is False
+    assert "xai-" not in json.dumps(status).lower()
+
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hunt",
+            "--json",
+            "agent",
+            "secret",
+            "set",
+            "--env",
+            "XAI_API_KEY",
+            "--value",
+            "xai-jane-doe-test-key-not-real",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)
+    assert payload["api_key_set"] is True
+    assert "xai-jane-doe-test-key-not-real" not in r.stdout
+    assert "xai-jane-doe-test-key-not-real" not in r.stderr
+    assert "xai-jane-doe-test-key-not-real" in (data / "secrets.env").read_text(
+        encoding="utf-8"
+    )
+
+    _, cfg = _json(
+        [
+            "agent",
+            "config",
+            "--harness",
+            "opencode",
+            "--base-url",
+            "http://127.0.0.1:9/v1",
+            "--api-key-env",
+            "",
+            "--model",
+            "gemma-e4b",
+        ],
+        env,
+        check=False,
+    )
+    assert cfg["model"]["base_url"] == "http://127.0.0.1:9/v1"
+    assert cfg["harness"] == "opencode"
+    raw = (data / "config.yaml").read_text(encoding="utf-8")
+    assert "http://127.0.0.1:9/v1" in raw
+    assert "xai-jane-doe-test-key-not-real" not in raw
+
+    preview = _json(
+        ["agent", "install", "--harness", "claude", "--dry-run", "--root", str(data)],
+        env,
+    )[1]
+    assert preview["note"].startswith("dry-run")
+    assert any(row["kind"] == "mcp" for row in preview["writes"])
+    assert not (data / ".mcp.json").exists()
