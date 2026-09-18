@@ -289,6 +289,11 @@ def test_ui_dark_mode_boot_and_tokens():
     assert "This browser only. Hunt does not store theme in the workspace." in js
     assert "prefers-color-scheme: dark" in js
     assert 'event.key !== THEME_KEY' in js or 'ev.key !== THEME_KEY' in js
+    assert (
+        '[data-primitive="ThemeMenu"] [role="menuitemradio"]:has(.theme-menu-help) {\n'
+        "    height: auto;\n"
+        "    min-height: 44px;"
+    ) in css
 
 
 def test_ui_visual_followup_mira_agu7():

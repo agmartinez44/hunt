@@ -1428,8 +1428,10 @@ main.page {
     width: 44px;
     height: 44px;
   }
-  [data-primitive="ThemeMenu"] [role="menuitemradio"] {
-    height: 44px;
+  [data-primitive="ThemeMenu"] [role="menuitemradio"],
+  [data-primitive="ThemeMenu"] [role="menuitemradio"]:has(.theme-menu-help) {
+    height: auto;
+    min-height: 44px;
   }
   [data-primitive="PageHeader"].agent-header [data-primitive="Btn"].primary {
     min-height: 44px;
