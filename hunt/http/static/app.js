@@ -267,14 +267,14 @@
       .join("");
     const ws = state.meta || {};
     const chip = `<span data-primitive="WorkspaceChip">${esc(ws.workspace || "workspace")}<span class="profile"> · ${esc(ws.profile_name || "")}</span></span>`;
-    return `
-      <header data-primitive="AppBar">
+    return {
+      bar: `<header data-primitive="AppBar">
         <a class="wordmark" href="/">Hunt</a>
         <nav class="appbar-nav appbar-nav-desktop">${items}</nav>
         ${chip}
-      </header>
-      <nav data-primitive="AppTabBar"><div class="appbar-nav">${items}</div></nav>
-    `;
+      </header>`,
+      tabs: `<nav data-primitive="AppTabBar"><div class="appbar-nav">${items}</div></nav>`,
+    };
   }
 
   function toastHtml() {
@@ -319,7 +319,8 @@
   }
 
   function shell(current, badges, body) {
-    return `<div data-primitive="AppShell">${nav(current, badges)}<main class="page">${body}</main>${toastHtml()}${dialogHtml()}</div>`;
+    const n = nav(current, badges);
+    return `<div data-primitive="AppShell">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
   }
 
   function dialogHtml() {
@@ -543,8 +544,14 @@
         ${CopyId(app.id)}
         ${CommandHint(`hunt applications update ${app.id} --status ${app.status} --json`)}
       </div>`;
+    const paySummary = `<div class="section pay-summary">
+      ${PayQuoted(quotedOf(app))}
+      ${PayDerived(app.comp_derived)}
+      ${app.tax_home_for_net ? `<p class="faint">tax_home_for_net ${esc(app.tax_home_for_net)}</p>` : ""}
+      <div style="margin-top:8px">${FloorBadge(app.comp_derived)}</div>
+    </div>`;
     const quotedForm = `<form id="quoted-form" class="section" data-primitive="QuotedForm">
-      <h2>Quoted</h2>
+      <h2>Quoted fields</h2>
       <div class="form-grid">
         ${FormField("Company", input("company", app.company))}
         ${FormField("Source", input("source", app.source))}
@@ -568,7 +575,6 @@
       </div>
       <div style="margin-top:12px">${Btn("Save quoted", { variant: "primary", type: "submit" })}</div>
     </form>`;
-    const derived = `<div class="section"><h2>Derived</h2>${PayDerived(app.comp_derived)}${app.tax_home_for_net ? `<p class="faint">tax_home_for_net ${esc(app.tax_home_for_net)}</p>` : ""}<div style="margin-top:8px">${FloorBadge(app.comp_derived)}</div></div>`;
     const knocks = (app.knockouts || []).map((k) => `<span class="knockout">${esc(k)}</span>`).join("") || `<span class="muted">None</span>`;
     const urlLine = app.url
       ? `<p><a href="${esc(app.url)}" target="_blank" rel="noopener">${esc(app.url)}</a></p>`
@@ -619,7 +625,7 @@
       <section class="section"><h2>Events</h2>${evHtml}</section>
     `;
     const body = `${header}<div class="detail">
-      <div class="detail-left">${quotedForm}${derived}<div class="section"><h2>Knockouts</h2>${knocks}${urlLine}</div></div>
+      <div class="detail-left">${paySummary}${quotedForm}<div class="section"><h2>Knockouts</h2>${knocks}${urlLine}</div></div>
       <div class="detail-right">${right}</div>
     </div>
     <div class="sticky-save">${Btn("Save quoted", { variant: "primary", attrs: "data-submit-quoted" })}</div>`;

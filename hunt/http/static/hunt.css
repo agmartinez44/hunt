@@ -728,7 +728,10 @@ main.page {
 .faint { color: var(--text-faint); }
 .danger-text { color: var(--danger); }
 .pay-cell { line-height: 16px; }
-.pay-cell [data-primitive="PayQuoted"] .caption { display: none; }
+.pay-summary [data-primitive="PayQuoted"] {
+  display: block;
+  margin-bottom: var(--space-2);
+}
 
 @media (max-width: 799px) {
   .appbar-nav-desktop { display: none; }
