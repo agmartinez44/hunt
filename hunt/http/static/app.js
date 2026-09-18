@@ -1933,14 +1933,9 @@
     const installCli = harness === "auto"
       ? "hunt agent doctor --json"
       : `hunt agent install --harness ${harness} --json`;
-    const firstFail = st === "fail"
-      ? ((state.agentDoctor && state.agentDoctor.checks) || []).find((c) => !c.ok)
-      : null;
     const banner = state.agentError
       ? ErrorBanner(state.agentError, "data-agent-retry")
-      : firstFail
-        ? ErrorBanner(firstFail.label || firstFail.detail || "Doctor failed", "data-agent-retry")
-        : "";
+      : "";
     const installDisabled = busy || harness === "auto" ? "disabled" : "";
     const localNote = path === "local"
       ? `<p class="help">Local model — wiring is enough. Screening quality may still want Grok or Claude.</p>`

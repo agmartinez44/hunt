@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -515,6 +516,21 @@ def test_connect_agent_settings_ui_contract():
     assert "[data-primitive=\"AgentStatus\"]" in css
     assert "[data-primitive=\"DoctorList\"]" in css
     assert "[data-primitive=\"SecretField\"]" in css
+    # AGU-25: ErrorBanner is for network/exception only, not first doctor fail.
+    assert "ErrorBanner(state.agentError" in js
+    assert "ErrorBanner(firstFail" not in js
+    # AGU-25: last DoctorList row rule must not pin 36px (mobile wrap collision).
+    row_blocks = list(re.finditer(
+        r'\[data-primitive="DoctorList"\] \.doctor-row \{([^}]+)\}', css
+    ))
+    assert row_blocks, "DoctorList .doctor-row rules missing"
+    last_row = row_blocks[-1].group(1)
+    assert re.search(r"(?<!min-)height:\s*36px", last_row) is None
+    assert "height: auto" in last_row
+    assert "flex-wrap: wrap" in last_row
+    assert "[data-primitive=\"AgentStatus\"][data-state=\"connecting\"]" in css
+    assert "AppBar\"] > [data-primitive=\"NavItem\"]" in css
+    assert "PageHeader\"].agent-header [data-primitive=\"Btn\"].primary" in css
 
 
 def test_agent_http_secret_never_returned_and_local_round_trip(client):

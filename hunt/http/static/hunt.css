@@ -1256,10 +1256,13 @@ main.page {
     height: 44px;
     width: 100%;
   }
-  [data-primitive="DoctorList"] .doctor-row {
-    height: auto;
-    min-height: 36px;
-    flex-wrap: wrap;
+  [data-primitive="AppBar"] > [data-primitive="NavItem"] {
+    min-height: 44px;
+    height: 44px;
+  }
+  [data-primitive="PageHeader"].agent-header [data-primitive="Btn"].primary {
+    min-height: 44px;
+    height: 44px;
   }
 }
 
@@ -1305,6 +1308,9 @@ main.page {
 [data-primitive="AgentStatus"] p {
   margin: 0;
   color: var(--text-muted);
+}
+[data-primitive="AgentStatus"][data-state="connecting"] {
+  background: var(--status-waiting-bg);
 }
 [data-primitive="AgentStatus"][data-state="connected"] {
   background: var(--status-sent-bg);
@@ -1363,7 +1369,6 @@ main.page {
   align-items: center;
   gap: var(--space-2);
   min-height: 36px;
-  height: 36px;
   padding: 0 var(--space-3);
   border-top: 1px solid var(--border);
   font-size: var(--text-sm);
@@ -1391,6 +1396,16 @@ main.page {
 [data-primitive="DoctorList"] .doctor-row span:last-child {
   overflow-wrap: anywhere;
   min-width: 0;
+}
+@media (max-width: 799px) {
+  [data-primitive="DoctorList"] .doctor-row {
+    height: auto;
+    min-height: 36px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
 }
 
 [data-primitive="SecretField"] {
