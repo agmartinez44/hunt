@@ -7,9 +7,10 @@ still submit applications to employers.
 This repository is **code**. Your biography, mail, PDFs, and SQLite store
 belong in a private workspace (`$HUNT_DATA`), never in git.
 
-v1 is being built in layers. This tree already ships **`hunt.cv`**: the
-honesty-gated CV pipeline (Jinja / WeasyPrint render → finalize → verify).
-`hunt.core`, CLI, HTTP, and MCP come next and will call this same component.
+v1 is being built in layers. This tree ships **`hunt.core`** (SQLite board,
+inbox, artifacts, events, quoted→derived pay) and **`hunt <noun> <verb>`**,
+plus **`hunt.cv`** (Jinja / WeasyPrint render → finalize → verify). HTTP and
+MCP will be thin clients of the same domain layer.
 
 ## Clone + example workspace
 
@@ -24,12 +25,16 @@ python3 -m venv .venv
 cp -a example-workspace /tmp/hunt-data-jane
 export HUNT_DATA=/tmp/hunt-data-jane
 
+.venv/bin/hunt --json applications create --company "Acme Radar" \
+  --title-posted "Staff SRE" --comp-amount 50 --comp-currency USD --comp-unit hour
+.venv/bin/hunt applications list
 .venv/bin/hunt-cv render
 .venv/bin/hunt-cv finalize "$HUNT_DATA/attachments/cv/Jane_Doe_CV.pdf"
 .venv/bin/hunt-cv verify "$HUNT_DATA/attachments/cv/Jane_Doe_CV.pdf" --json --expect Kubernetes
 ```
 
-Equivalent: `python -m hunt.cv render` (same subcommands).
+Equivalent: `python -m hunt` and `python -m hunt.cv`. `--json` is the agent
+contract; default human output is tables. Exit status is non-zero on error.
 
 Expect a tagged PDF, `verify` exit code 0, and a stderr note that the
 deliberately unverified achievement `ec-monitoring` was excluded.
@@ -38,7 +43,7 @@ deliberately unverified achievement `ec-monitoring` was excluded.
 
 | Layer | What | Where |
 |---|---|---|
-| **Hunt (code)** | `hunt.cv` (and later core / CLI / HTTP / MCP) | This repo |
+| **Hunt (code)** | `hunt.core`, CLI, `hunt.cv` (later HTTP / MCP) | This repo |
 | **Workspace (data)** | `config.yaml`, `knowledge/*.yaml` (facts + integrity *values*), `store.sqlite`, attachments | **`$HUNT_DATA`** |
 
 ```
@@ -46,7 +51,7 @@ $HUNT_DATA/
   config.yaml
   secrets.env          # gitignored; never commit
   knowledge/           # facts + this user's integrity.yaml
-  store.sqlite         # later: applications, inbox, jobs
+  store.sqlite         # applications, inbox, events, artifacts
   attachments/
     cv/                # hunt.cv output
     applications/<id>/

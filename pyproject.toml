@@ -21,6 +21,7 @@ dependencies = [
 dev = ["pytest"]
 
 [project.scripts]
+hunt = "hunt.cli:main"
 hunt-cv = "hunt.cv.cli:main"
 
 [tool.setuptools.packages.find]

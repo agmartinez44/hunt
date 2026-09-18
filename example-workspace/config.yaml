@@ -1,11 +1,33 @@
 # Fictional example workspace. Copy to $HUNT_DATA.
 # Runtime / CLI will read this; hunt.cv only needs knowledge/.
+# Tax rates and the floor are illustrative for Jane Doe — not tax advice.
 
 bind: "127.0.0.1"
 port: 8787
 hours_per_month: 160
 days_per_month: 21
 display_currency: EUR
+comp_floor:
+  amount: 7000
+  currency: EUR
+  unit: month
+fx:
+  as_of: "2026-09-01"
+  rates:
+    EUR: 1.0
+    USD: 0.90
+    GBP: 1.15
+    PLN: 0.23
+    CHF: 1.05
+tax_homes:
+  pl_jdg:
+    effective_rate: 0.17
+  es_autonomo:
+    effective_rate: 0.30
+  ch_fte:
+    effective_rate: 0.22
+  us_1099:
+    effective_rate: 0.28
 worker:
   backend: none
 cv:

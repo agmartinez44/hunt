@@ -10,7 +10,8 @@ the Hunt repo.
 
 ```
 example-workspace/
-  config.yaml          # bind, worker, display currency (no secrets)
+  config.yaml          # bind, FX stamp, tax_homes, floor (no secrets)
   knowledge/           # honesty-gated YAML + integrity *values*
-  attachments/         # hunt.cv writes PDFs here at runtime (gitignored)
+  store.sqlite         # created at runtime by hunt.core (gitignored)
+  attachments/         # PDFs and application files (gitignored)
 ```

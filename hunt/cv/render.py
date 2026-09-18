@@ -102,6 +102,7 @@ def render_cv(
     data_dir: str | Path | None = None,
     emphasis_path: str | Path | None = None,
     output_dir: str | Path | None = None,
+    quiet: bool = False,
 ) -> Path:
     """Render a tagged PDF into the workspace (never the source tree)."""
     data = resolve_data_dir(data_dir)
@@ -239,5 +240,6 @@ def render_cv(
         1,
     )
     HTML(string=html_doc).write_pdf(out, pdf_variant="pdf/ua-1")
-    print(out)
+    if not quiet:
+        print(out)
     return out
