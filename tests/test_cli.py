@@ -173,6 +173,18 @@ def test_inbox_promote_is_explicit(workspace):
     ids = {row["id"] for row in inbox["inbox"]}
     assert item_id in ids
     assert dismiss_id in ids
+    widget = next(row for row in inbox["inbox"] if row["id"] == item_id)
+    assert widget["role"] == "Reliability Engineer"
+    assert widget["engagement"] == "b2b"
+    assert widget["net_month"] is not None
+    assert widget["display_currency"] == "EUR"
+    assert widget["comp_derived"]["net_month"] == widget["net_month"]
+    assert "clears_floor" in widget["comp_derived"]
+    table = _run(["inbox", "list"], env)
+    assert "ROLE" in table.stdout
+    assert "NET/MO" in table.stdout
+    assert "WHY KEEP" in table.stdout
+    assert "FLOOR" not in table.stdout
     _, apps_before = _json(["applications", "list"], env)
     assert apps_before["applications"] == []
 

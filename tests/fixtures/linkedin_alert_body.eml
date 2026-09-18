@@ -1,0 +1,58 @@
+From: LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>
+Subject: Acme Radar is hiring a Staff SRE
+Date: Thu, 1 Jan 2026 12:00:00 +0000
+Message-ID: <body-alert@linkedin.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_0"
+
+------=_Part_0
+Content-Type: text/plain; charset="UTF-8"
+
+Your job alert for staff sre in Europe
+New jobs matching your alert
+
+Staff SRE
+Acme Radar
+Warsaw, Poland (Remote)
+
+This company is actively hiring
+€90K / year
+View job: https://www.linkedin.com/comm/jobs/view/4290000001/?trackingId=abc
+
+---------------------------------------------------------
+
+Office Coordinator
+No Hire Inc
+Berlin (On-site)
+
+View job: https://www.linkedin.com/comm/jobs/view/4290000002/?trackingId=def
+
+---------------------------------------------------------
+
+See all jobs on LinkedIn: https://www.linkedin.com/comm/jobs/search-results/
+
+------=_Part_0
+Content-Type: text/html; charset="UTF-8"
+
+<html>
+<body>
+<h2>New jobs matching your alert</h2>
+<table>
+  <tr>
+    <td>
+      <a href="https://www.linkedin.com/comm/jobs/view/4290000001/?trackingId=abc">Staff SRE</a>
+      <p>Acme Radar · Warsaw, Poland (Remote)</p>
+      <p>€90K / year</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <a href="https://www.linkedin.com/comm/jobs/view/4290000002/?trackingId=def">Office Coordinator</a>
+      <p>No Hire Inc · Berlin (On-site)</p>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
+
+------=_Part_0--

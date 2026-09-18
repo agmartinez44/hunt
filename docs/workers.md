@@ -53,7 +53,9 @@ Hunt does not ship a Hermes client. There is no apply/send job type.
 
 Adapters (`imap_alerts`, `http_json`) never POST an application and never
 send mail. `imap_alerts` selects the folder `readonly=True` and uses
-`BODY.PEEK`. It searches FROM (when configured), then applies header
+`BODY.PEEK[]` (headers + body; never STORE/EXPUNGE). LinkedIn alerts are
+parsed into employer, role, location, URL, engagement, and quoted pay
+when present. It searches FROM (when configured), then applies header
 filters, then the `limit` — so matches older than the last N messages in
 a large INBOX still land. Credentials live in `$HUNT_DATA/secrets.env`,
 not in git.

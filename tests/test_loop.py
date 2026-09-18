@@ -18,6 +18,7 @@ from hunt.core.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE = ROOT / "example-workspace"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _run(args, env, check=True):
@@ -67,16 +68,40 @@ class FakeIMAP:
         self.fetched_spec.append(spec)
         key = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
         headers = self.messages[key]
-        raw = (
-            f"From: {headers['from']}\r\n"
-            f"Subject: {headers['subject']}\r\n"
-            f"Date: {headers['date']}\r\n"
-            f"Message-ID: {headers['message_id']}\r\n\r\n"
-        )
-        return "OK", [(b"1", raw.encode())]
+        if headers.get("raw") is not None:
+            raw = headers["raw"]
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+        else:
+            body = headers.get("body") or ""
+            raw = (
+                f"From: {headers['from']}\r\n"
+                f"Subject: {headers['subject']}\r\n"
+                f"Date: {headers['date']}\r\n"
+                f"Message-ID: {headers['message_id']}\r\n"
+                f"MIME-Version: 1.0\r\n"
+                f"Content-Type: text/plain; charset=UTF-8\r\n"
+                f"\r\n"
+                f"{body}"
+            ).encode("utf-8")
+        return "OK", [(b"1 (BODY[] {%d}" % len(raw), raw), b")"]
 
     def logout(self):
         return "OK", []
+
+
+def _eml_message(name: str) -> dict:
+    raw = (FIXTURES / name).read_bytes()
+    import email
+
+    msg = email.message_from_bytes(raw)
+    return {
+        "from": msg.get("From"),
+        "subject": msg.get("Subject"),
+        "date": msg.get("Date"),
+        "message_id": msg.get("Message-ID"),
+        "raw": raw,
+    }
 
 
 def test_source_poll_screen_promote_only_path(workspace):
@@ -215,9 +240,10 @@ def test_imap_alerts_peek_readonly():
     )
     assert fake.readonly is True
     assert all("PEEK" in spec for spec in fake.fetched_spec)
+    assert all("STORE" not in spec and "EXPUNGE" not in spec for spec in fake.fetched_spec)
     assert len(listings) == 1
-    assert listings[0].title.startswith("Job alert")
-    assert listings[0].company == "Job alert"
+    assert listings[0].title == "Staff SRE"
+    assert listings[0].company == "Acme"
 
 
 def test_imap_alerts_filters_before_limit():
@@ -247,7 +273,8 @@ def test_imap_alerts_filters_before_limit():
         connect=lambda: fake,
     )
     assert len(listings) == 1
-    assert listings[0].title == "Acme is hiring a Staff SRE"
+    assert listings[0].company == "Acme"
+    assert listings[0].title == "Staff SRE"
 
 
 def test_imap_alerts_skips_inmail_from_same_domain():
@@ -282,11 +309,117 @@ def test_imap_alerts_skips_inmail_from_same_domain():
         {},
         connect=lambda: fake,
     )
-    titles = {row.title for row in listings}
-    assert titles == {
-        "Reap is hiring a Senior Site Reliability Engineer",
-        "SRE at ExampleCorp: up to EUR 10K/month",
+    by_company = {row.company: row for row in listings}
+    assert set(by_company) == {"Reap", "ExampleCorp"}
+    assert by_company["Reap"].title == "Senior Site Reliability Engineer"
+    assert by_company["ExampleCorp"].title == "SRE"
+    assert by_company["ExampleCorp"].payload["comp_quoted"] == {
+        "amount": 10000.0,
+        "currency": "EUR",
+        "unit": "month",
     }
+
+
+def test_imap_alerts_header_only_vs_body_fixture():
+    header_only = FakeIMAP({"1": _eml_message("linkedin_alert_headers_only.eml")})
+    cfg = {
+        "from_contains": ["jobalerts-noreply"],
+        "subject_contains": ["is hiring", " at "],
+        "company_default": "LinkedIn",
+    }
+    headers = poll_imap_alerts(cfg, {}, connect=lambda: header_only)
+    assert header_only.readonly is True
+    assert header_only.fetched_spec == ["(BODY.PEEK[])"]
+    assert len(headers) == 1
+    assert headers[0].company == "Acme Radar"
+    assert headers[0].title == "Staff SRE"
+    assert headers[0].url is None
+    assert "comp_quoted" not in headers[0].payload
+
+    with_body = FakeIMAP({"1": _eml_message("linkedin_alert_body.eml")})
+    listings = poll_imap_alerts(cfg, {}, connect=lambda: with_body)
+    assert listings[0].company == "Acme Radar"
+    assert listings[0].title == "Staff SRE"
+    assert listings[0].url == "https://www.linkedin.com/jobs/view/4290000001"
+    assert listings[0].payload["location_city"] == "Warsaw"
+    assert listings[0].payload["location_country"] == "Poland"
+    assert listings[0].payload["modality"] == "remote"
+    assert listings[0].payload["comp_quoted"]["amount"] == 90000.0
+    assert listings[0].external_id == "<body-alert@linkedin.com>"
+
+
+def test_imap_rescreen_updates_listing_without_duplicate(workspace):
+    data, env = workspace
+    from hunt.core.listings import upsert_listing
+    from hunt.core.screen import screen_inbox
+    from hunt.core.workspace import Workspace
+
+    with Workspace.open(data) as ws:
+        from hunt.core.sources import list_sources
+
+        list_sources(ws)
+        listing, created = upsert_listing(
+            ws,
+            source_id="mail-alerts",
+            external_id="<body-alert@linkedin.com>",
+            title="Acme Radar is hiring a Staff SRE",
+            company="LinkedIn",
+            url=None,
+            payload={
+                "company": "LinkedIn",
+                "title_posted": "Acme Radar is hiring a Staff SRE",
+                "source": "mail-alerts",
+            },
+            commit=True,
+        )
+        assert created is True
+        listing_id = listing.id
+        first = screen_inbox(ws)
+        assert first["inbox_added"] == 1
+        enriched = ws.conn.execute(
+            "SELECT company, title FROM listings WHERE id = ?", (listing_id,)
+        ).fetchone()
+        assert enriched["company"] == "Acme Radar"
+        assert enriched["title"] == "Staff SRE"
+        inbox_id = ws.conn.execute(
+            "SELECT id FROM inbox_items WHERE listing_id = ?", (listing_id,)
+        ).fetchone()["id"]
+
+        fake = FakeIMAP({"1": _eml_message("linkedin_alert_body.eml")})
+        fetched = poll_imap_alerts(
+            {
+                "from_contains": ["jobalerts-noreply"],
+                "subject_contains": ["is hiring"],
+                "company_default": "LinkedIn",
+            },
+            {},
+            connect=lambda: fake,
+        )
+        raw = fetched[0]
+        updated, is_new = upsert_listing(
+            ws,
+            source_id="mail-alerts",
+            external_id=raw.external_id,
+            title=raw.title,
+            company=raw.company,
+            url=raw.url,
+            payload=raw.payload,
+            commit=True,
+        )
+        assert is_new is False
+        assert updated.id == listing_id
+        assert updated.company == "Acme Radar"
+        assert updated.title == "Staff SRE"
+        assert updated.url == "https://www.linkedin.com/jobs/view/4290000001"
+        second = screen_inbox(ws)
+        assert second["inbox_added"] == 0
+        assert second["refreshed"] == 1
+        row = ws.conn.execute(
+            "SELECT id FROM inbox_items WHERE listing_id = ?", (listing_id,)
+        ).fetchone()
+        assert row["id"] == inbox_id
+        count = ws.conn.execute("SELECT COUNT(*) AS n FROM inbox_items").fetchone()["n"]
+        assert count == 1
 
 
 def test_adapter_sources_have_no_submit():

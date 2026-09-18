@@ -5,12 +5,17 @@ from __future__ import annotations
 import imaplib
 import ssl
 from email.header import decode_header
+from email import policy
+from email.parser import BytesParser
 from hashlib import sha256
 from typing import Any, Callable
 
 from hunt.adapters import RawListing
+from hunt.adapters.linkedin_alert import extract_bodies, parse_alert
 from hunt.core.errors import HuntError, ValidationError
 from hunt.core.secrets import secret
+
+_FETCH_SPEC = "(BODY.PEEK[])"
 
 
 def _decode(value: Any) -> str:
@@ -96,6 +101,88 @@ def _connect_ssl(host: str, port: int, user: str, password: str):
     return client
 
 
+def _fetch_blob(fetched: Any) -> bytes:
+    if not fetched:
+        return b""
+    for item in fetched:
+        if isinstance(item, tuple) and len(item) > 1:
+            part = item[1]
+            if isinstance(part, (bytes, bytearray)):
+                return bytes(part)
+    return b""
+
+
+def _listing_from_message(
+    blob: bytes,
+    *,
+    company_default: str,
+    from_needles: list[str],
+    subject_needles: list[str],
+) -> RawListing | None:
+    msg = None
+    headers: dict[str, str]
+    text = ""
+    html = ""
+    if blob.strip():
+        try:
+            msg = BytesParser(policy=policy.default).parsebytes(blob)
+        except Exception:
+            msg = None
+    if msg is not None:
+        headers = {
+            "from": _decode(msg.get("From")),
+            "subject": _decode(msg.get("Subject")),
+            "date": _decode(msg.get("Date")),
+            "message-id": _decode(msg.get("Message-ID")),
+        }
+        text, html = extract_bodies(msg)
+    else:
+        headers = _parse_headers(blob.decode("utf-8", errors="replace"))
+    frm = headers.get("from") or ""
+    subject = headers.get("subject") or ""
+    if not _matches(frm, from_needles) or not _matches(subject, subject_needles):
+        return None
+    if not subject:
+        return None
+    parsed = parse_alert(
+        subject, text=text, html=html, company_default=company_default
+    )
+    title = str(parsed.get("title") or subject)
+    company = str(parsed.get("company") or company_default)
+    url = parsed.get("url")
+    url = str(url) if url else None
+    msg_key = headers.get("message-id") or ""
+    if not msg_key:
+        msg_key = sha256(f"{frm}|{subject}|{headers.get('date')}".encode()).hexdigest()[
+            :16
+        ]
+    payload: dict[str, Any] = {
+        "company": company,
+        "title_posted": title,
+        "source": "imap_alerts",
+        "from": frm,
+        "date": headers.get("date"),
+    }
+    if url:
+        payload["url"] = url
+    for key in (
+        "location_city",
+        "location_country",
+        "modality",
+        "engagement",
+        "comp_quoted",
+    ):
+        if parsed.get(key) not in (None, ""):
+            payload[key] = parsed[key]
+    return RawListing(
+        external_id=msg_key,
+        title=title,
+        company=company,
+        url=url,
+        payload=payload,
+    )
+
+
 def poll_imap_alerts(
     config: dict[str, Any],
     secrets: dict[str, str],
@@ -132,42 +219,19 @@ def poll_imap_alerts(
             raise HuntError(f"imap folder not selectable: {folder}")
         ids = _search_ids(client, from_needles)
         for msg_id in ids:
-            typ, fetched = client.fetch(
-                msg_id,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)])",
-            )
+            typ, fetched = client.fetch(msg_id, _FETCH_SPEC)
             if typ != "OK" or not fetched:
                 continue
-            blob = b""
-            first = fetched[0]
-            if isinstance(first, tuple) and len(first) > 1:
-                part = first[1]
-                blob = part if isinstance(part, (bytes, bytearray)) else b""
-            headers = _parse_headers(blob.decode("utf-8", errors="replace"))
-            frm = headers.get("from") or ""
-            subject = headers.get("subject") or ""
-            if not _matches(frm, from_needles) or not _matches(subject, subject_needles):
-                continue
-            if not subject:
-                continue
-            msg_key = headers.get("message-id") or ""
-            if not msg_key:
-                msg_key = sha256(f"{frm}|{subject}|{headers.get('date')}".encode()).hexdigest()[:16]
-            listings.append(
-                RawListing(
-                    external_id=msg_key,
-                    title=subject,
-                    company=company_default,
-                    url=None,
-                    payload={
-                        "company": company_default,
-                        "title_posted": subject,
-                        "source": "imap_alerts",
-                        "from": frm,
-                        "date": headers.get("date"),
-                    },
-                )
+            blob = _fetch_blob(fetched)
+            listing = _listing_from_message(
+                blob,
+                company_default=company_default,
+                from_needles=from_needles,
+                subject_needles=subject_needles,
             )
+            if listing is None:
+                continue
+            listings.append(listing)
         listings = listings[-limit:]
     finally:
         logout = getattr(client, "logout", None)

@@ -4,9 +4,44 @@ from __future__ import annotations
 
 from typing import Any
 
-from hunt.core.inbox import add_inbox_for_listing
-from hunt.core.listings import Listing, listings_without_inbox
+import json
+
+from hunt.adapters.linkedin_alert import parse_subject
+from hunt.core.inbox import add_inbox_for_listing, refresh_inbox_for_listing
+from hunt.core.listings import Listing, get_listing, list_listings
 from hunt.core.workspace import Workspace
+
+_MAILBOX_COMPANIES = {"linkedin", "job alert", "imap", "mail"}
+
+
+def _enrich_listing_from_subject(ws: Workspace, listing: Listing) -> Listing:
+    """If company is still the mailbox label, parse ``X is hiring Y`` from title."""
+    parsed = parse_subject(listing.title or "")
+    company = parsed.get("company")
+    title = parsed.get("title")
+    if not company or not title:
+        return listing
+    current = (listing.company or "").strip().lower()
+    if current and current not in _MAILBOX_COMPANIES:
+        return listing
+    payload = dict(listing.payload)
+    payload["company"] = company
+    payload["title_posted"] = title
+    if parsed.get("comp_quoted") and not payload.get("comp_quoted"):
+        payload["comp_quoted"] = parsed["comp_quoted"]
+    if parsed.get("engagement") and not payload.get("engagement"):
+        payload["engagement"] = parsed["engagement"]
+    if parsed.get("modality") and not payload.get("modality"):
+        payload["modality"] = parsed["modality"]
+    ws.conn.execute(
+        """
+        UPDATE listings
+        SET title = ?, company = ?, payload_json = ?
+        WHERE id = ?
+        """,
+        (title, company, json.dumps(payload), listing.id),
+    )
+    return get_listing(ws, listing.id) or listing
 
 
 def evaluate_knockouts(
@@ -54,14 +89,43 @@ def evaluate_knockouts(
 
 
 def screen_listing(ws: Workspace, listing: Listing) -> dict[str, Any]:
+    listing = _enrich_listing_from_subject(ws, listing)
     knockouts = evaluate_knockouts(
         ws, title=listing.title, payload=listing.payload
     )
     drop_on = {str(x) for x in (ws.knockout_rules().get("drop_on") or []) if x}
-    if drop_on and set(knockouts) & drop_on:
+    existing = ws.conn.execute(
+        "SELECT id, status FROM inbox_items WHERE listing_id = ?",
+        (listing.id,),
+    ).fetchone()
+    if drop_on and set(knockouts) & drop_on and existing is None:
         return {"listing_id": listing.id, "dropped": True, "knockouts": knockouts}
     why_risk = ", ".join(knockouts) if knockouts else None
     why_keep = None if knockouts else "passed workspace knockouts"
+    if existing:
+        if existing["status"] == "pending":
+            item = refresh_inbox_for_listing(
+                ws,
+                listing.id,
+                why_keep=why_keep,
+                why_risk=why_risk,
+                knockouts=knockouts,
+                commit=False,
+            )
+            return {
+                "listing_id": listing.id,
+                "dropped": False,
+                "refreshed": True,
+                "inbox_id": item.id,
+                "knockouts": knockouts,
+            }
+        return {
+            "listing_id": listing.id,
+            "dropped": False,
+            "skipped": True,
+            "inbox_id": existing["id"],
+            "knockouts": knockouts,
+        }
     item = add_inbox_for_listing(
         ws,
         listing.id,
@@ -82,12 +146,22 @@ def screen_inbox(ws: Workspace) -> dict[str, Any]:
     added = 0
     dropped = 0
     screened = 0
-    for listing in listings_without_inbox(ws):
+    refreshed = 0
+    for listing in list_listings(ws):
         screened += 1
         result = screen_listing(ws, listing)
         if result.get("dropped"):
             dropped += 1
+        elif result.get("refreshed"):
+            refreshed += 1
+        elif result.get("skipped"):
+            continue
         else:
             added += 1
     ws.conn.commit()
-    return {"screened": screened, "inbox_added": added, "dropped": dropped}
+    return {
+        "screened": screened,
+        "inbox_added": added,
+        "dropped": dropped,
+        "refreshed": refreshed,
+    }

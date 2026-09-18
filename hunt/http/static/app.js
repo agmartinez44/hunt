@@ -23,7 +23,7 @@
   const JOB_STATES = ["queued", "running", "done", "failed"];
   const TOKEN_KEY = "hunt_token";
   const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"];
-  const INBOX_COLS = ["Company", "Title", "Source", "Pay", "Why keep", "Why risk", "Knockouts", "Age", "Actions", "Id"];
+  const INBOX_COLS = ["Company", "Role", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
   const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
 
@@ -146,7 +146,10 @@
   }
 
   function locationOf(app) {
-    return [app.location_city, app.location_country].filter(Boolean).join(", ");
+    if (app && app.location) return app.location;
+    const city = app && (app.location_city || (app.payload && app.payload.location_city));
+    const country = app && (app.location_country || (app.payload && app.payload.location_country));
+    return [city, country].filter(Boolean).join(", ");
   }
 
   function quotedOf(obj) {
@@ -696,16 +699,19 @@
     const rows = items
       .map((it) => {
         const q = quotedOf(it);
-        const knocks = (it.knockouts || []).map((k) => `<span class="knockout">${esc(k)}</span>`).join("");
-        const src = (it.payload && (it.payload.adapter || it.payload.source)) || "";
+        const d = it.comp_derived;
+        const pay = q
+          ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
+          : NetEstimate(d);
+        const role = it.role || it.title || "";
         return `<tr data-primitive="InboxRow" data-id="${esc(it.id)}">
           <td>${esc(it.company)}</td>
-          <td>${esc(it.title)}</td>
-          <td>${esc(src)}</td>
-          <td>${PayQuoted(q)}</td>
+          <td>${esc(role)}</td>
+          <td>${esc(locationOf(it))}</td>
+          <td>${esc(it.engagement || "")}</td>
+          <td>${pay}</td>
           <td>${esc(it.why_keep || "")}</td>
           <td>${esc(it.why_risk || "")}</td>
-          <td>${knocks}</td>
           <td title="${esc(it.created_at)}">${esc(relative(it.created_at))}</td>
           <td>
             <div class="inbox-actions">
@@ -721,11 +727,18 @@
     const cards = items
       .map((it) => {
         const q = quotedOf(it);
+        const d = it.comp_derived;
+        const pay = q
+          ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
+          : NetEstimate(d);
+        const role = it.role || it.title || "";
+        const meta = [locationOf(it), it.engagement].filter(Boolean).join(" · ");
         return `<article data-primitive="InboxRow" class="inbox-card">
           <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${CommandHint(`hunt inbox promote ${it.id} --json`)}</span></div>
-          <div>${esc(it.title)}</div>
-          <div>${PayQuoted(q)}</div>
-          <div class="muted">${esc(it.why_keep || "")}</div>
+          <div>${esc(role)}</div>
+          <div class="muted">${esc(meta)}</div>
+          <div>${pay}</div>
+          <div class="muted">${esc(it.why_keep || it.why_risk || "")}</div>
           <div class="row-actions">
             ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
             ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
@@ -738,7 +751,7 @@
       badges,
       pageHeader("Inbox", `<span class="page-count">${items.length}</span>`, actions) +
         `<table data-primitive="DataTable" class="inbox-table">
-          <thead><tr><th>Company</th><th>Title</th><th>Source</th><th>Pay</th><th>Why keep</th><th>Why risk</th><th>Knockouts</th><th>Age</th><th>Actions</th><th>Id</th></tr></thead>
+          <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Engagement</th><th>Net /mo</th><th>Why keep</th><th>Why risk</th><th>Age</th><th>Actions</th><th>Id</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="inbox-cards">${cards}</div>`

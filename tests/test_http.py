@@ -148,10 +148,16 @@ def test_inbox_promote_http_is_only_listing_path(client):
         item_id = pending.id
 
     inbox = http.get("/api/inbox")
-    assert inbox.json()["inbox"][0]["id"] == item_id
-    assert "comp_derived" not in inbox.json()["inbox"][0]
-    pay = inbox.json()["inbox"][0]["payload"]["comp_quoted"]
+    row = inbox.json()["inbox"][0]
+    assert row["id"] == item_id
+    pay = row["payload"]["comp_quoted"]
     assert pay["amount"] == 85
+    assert row["comp_quoted"]["amount"] == 85
+    assert row["role"] == "Staff SRE"
+    assert "net_month" in row
+    assert "display_currency" in row
+    if row.get("comp_derived"):
+        assert "net_month" in row["comp_derived"]
 
     promoted = http.post(f"/api/inbox/{item_id}/promote", json={})
     assert promoted.status_code == 200, promoted.text
@@ -282,6 +288,9 @@ def test_ui_visual_followup_mira_agu7():
     assert "FloorBadge" not in js
     assert "<th>Floor</th>" not in js
     assert 'BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"]' in js
+    assert 'INBOX_COLS = ["Company", "Role", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
+    assert "<th>Net /mo</th>" in js
+    assert "<th>Floor</th>" not in js
     assert 'data-primitive="NetEstimate"' in js
     assert "${esc(money(derived.net_month))} ${esc(derived.display_currency)} /mo" in js
 

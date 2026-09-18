@@ -8,9 +8,10 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from hunt.core.applications import create_application
+from hunt.core.applications import create_application, derive_for_workspace
 from hunt.core.errors import HuntError, NotFoundError, ValidationError
 from hunt.core.ids import new_id, now_iso
+from hunt.core.pay import QuotedPay
 from hunt.core.workspace import Workspace
 
 INBOX_STATUSES = ("pending", "promoted", "dismissed")
@@ -48,6 +49,63 @@ class InboxItem:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+
+def location_label(
+    payload: dict[str, Any] | None,
+    *,
+    city: str | None = None,
+    country: str | None = None,
+) -> str | None:
+    data = payload or {}
+    city = city or data.get("location_city")
+    country = country or data.get("location_country")
+    parts = [str(p).strip() for p in (city, country) if p]
+    if parts:
+        return ", ".join(parts)
+    loc = data.get("location")
+    return str(loc).strip() if loc else None
+
+
+def _quoted_pay(payload: dict[str, Any]) -> QuotedPay | None:
+    quoted = payload.get("comp_quoted")
+    if not isinstance(quoted, dict) or quoted.get("amount") is None:
+        return None
+    try:
+        return QuotedPay(
+            amount=float(quoted["amount"]),
+            currency=str(quoted.get("currency") or "EUR"),
+            unit=str(quoted.get("unit") or "month"),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def serialize_inbox_item(ws: Workspace, item: InboxItem) -> dict[str, Any]:
+    """Human + agent inbox row. Net estimate is first-class; floor stays in derived JSON."""
+    data = item.to_dict()
+    payload = item.payload
+    quoted = _quoted_pay(payload)
+    derived = derive_for_workspace(
+        ws,
+        quoted,
+        payload.get("tax_home_for_net"),
+        country=payload.get("location_country"),
+        engagement=payload.get("engagement"),
+    )
+    derived_dict = derived.to_dict() if derived else None
+    location = location_label(payload)
+    data["role"] = item.title
+    data["location"] = location
+    data["location_city"] = payload.get("location_city")
+    data["location_country"] = payload.get("location_country")
+    data["engagement"] = payload.get("engagement")
+    data["modality"] = payload.get("modality")
+    data["comp_quoted"] = quoted.to_dict() if quoted else payload.get("comp_quoted")
+    data["comp_derived"] = derived_dict
+    data["net_month"] = derived.net_month if derived else None
+    data["display_currency"] = ws.display_currency
+    return data
 
 
 def _row_to_item(row) -> InboxItem:
@@ -157,6 +215,51 @@ def add_inbox_for_listing(
     if commit:
         ws.conn.commit()
     return get_inbox_item(ws, item_id)
+
+
+def refresh_inbox_for_listing(
+    ws: Workspace,
+    listing_id: str,
+    *,
+    why_keep: str | None = None,
+    why_risk: str | None = None,
+    knockouts: list[str] | None = None,
+    commit: bool = True,
+) -> InboxItem:
+    """Update knockouts on a pending inbox row. Does not duplicate or promote."""
+    existing = ws.conn.execute(
+        "SELECT id, status FROM inbox_items WHERE listing_id = ?",
+        (listing_id,),
+    ).fetchone()
+    if not existing:
+        return add_inbox_for_listing(
+            ws,
+            listing_id,
+            why_keep=why_keep,
+            why_risk=why_risk,
+            knockouts=knockouts,
+            commit=commit,
+        )
+    if existing["status"] != "pending":
+        return get_inbox_item(ws, existing["id"])
+    now = now_iso()
+    ws.conn.execute(
+        """
+        UPDATE inbox_items
+        SET why_keep = ?, why_risk = ?, knockouts_json = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            why_keep,
+            why_risk,
+            json.dumps(list(knockouts or [])),
+            now,
+            existing["id"],
+        ),
+    )
+    if commit:
+        ws.conn.commit()
+    return get_inbox_item(ws, existing["id"])
 
 
 def add_item(

@@ -80,6 +80,11 @@ def upsert_listing(
         (source_id, external_id),
     ).fetchone()
     if existing:
+        url = url or existing["url"]
+        title = title or existing["title"]
+        company = company or existing["company"]
+        if url:
+            body.setdefault("url", url)
         ws.conn.execute(
             """
             UPDATE listings
@@ -110,6 +115,13 @@ def upsert_listing(
         "SELECT * FROM listings WHERE id = ?", (listing_id,)
     ).fetchone()
     return _row_to_listing(row), True
+
+
+def list_listings(ws: Workspace) -> list[Listing]:
+    rows = ws.conn.execute(
+        "SELECT * FROM listings ORDER BY created_at ASC"
+    ).fetchall()
+    return [_row_to_listing(r) for r in rows]
 
 
 def listings_without_inbox(ws: Workspace) -> list[Listing]:
