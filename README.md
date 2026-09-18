@@ -8,9 +8,10 @@ This repository is **code**. Your biography, mail, PDFs, and SQLite store
 belong in a private workspace (`$HUNT_DATA`), never in git.
 
 v1 is being built in layers. This tree ships **`hunt.core`** (SQLite board,
-inbox, artifacts, events, quoted→derived pay) and **`hunt <noun> <verb>`**,
-plus **`hunt.cv`** (Jinja / WeasyPrint render → finalize → verify). HTTP and
-MCP will be thin clients of the same domain layer.
+inbox, artifacts, events, jobs, quoted→derived pay), **`hunt <noun> <verb>`**,
+**`hunt mcp`** (stdio tools mapped 1:1 onto those nouns), source adapters
+(`http_json`, `imap_alerts`), and **`hunt.cv`**. HTTP/UI is a thin client of
+the same domain layer.
 
 ## Clone + example workspace
 
@@ -28,10 +29,17 @@ export HUNT_DATA=/tmp/hunt-data-jane
 .venv/bin/hunt --json applications create --company "Acme Radar" \
   --title-posted "Staff SRE" --comp-amount 50 --comp-currency USD --comp-unit hour
 .venv/bin/hunt applications list
+.venv/bin/hunt --json sources run justjoin-sample --run
+.venv/bin/hunt --json jobs enqueue --type screen-inbox --run
+.venv/bin/hunt inbox list
+.venv/bin/hunt serve            # FastAPI + UI on 127.0.0.1:8787
 .venv/bin/hunt-cv render
 .venv/bin/hunt-cv finalize "$HUNT_DATA/attachments/cv/Jane_Doe_CV.pdf"
 .venv/bin/hunt-cv verify "$HUNT_DATA/attachments/cv/Jane_Doe_CV.pdf" --json --expect Kubernetes
 ```
+
+`hunt mcp` is the stdio MCP server (same nouns as the CLI). Writes stay in
+`$HUNT_DATA`. Adapters never submit employer forms.
 
 Equivalent: `python -m hunt` and `python -m hunt.cv`. `--json` is the agent
 contract; default human output is tables. Exit status is non-zero on error.
@@ -43,7 +51,7 @@ deliberately unverified achievement `ec-monitoring` was excluded.
 
 | Layer | What | Where |
 |---|---|---|
-| **Hunt (code)** | `hunt.core`, CLI, `hunt.cv` (later HTTP / MCP) | This repo |
+| **Hunt (code)** | `hunt.core`, CLI, HTTP/UI, MCP, adapters, jobs, `hunt.cv` | This repo |
 | **Workspace (data)** | `config.yaml`, `knowledge/*.yaml` (facts + integrity *values*), `store.sqlite`, attachments | **`$HUNT_DATA`** |
 
 ```
@@ -91,7 +99,7 @@ Golden test (proves the unverified bullet stays out of the PDF):
 
 Read `AGENTS.md`, then `skills/hunt-operator/SKILL.md`. Draft facts as
 `verified: false`; only the human flips them. Never invent metrics. Never
-submit an application or send mail.
+submit an application or send mail. Worker backends: `docs/workers.md`.
 
 ## License
 

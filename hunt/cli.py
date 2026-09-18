@@ -22,6 +22,9 @@ from hunt.core.cv import render as render_cv
 from hunt.core.errors import HuntError
 from hunt.core.events import list_events
 from hunt.core.inbox import dismiss, list_inbox, promote
+from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
+from hunt.core.sources import list_sources, run_source
+from hunt.core.worker import drain, run_one
 from hunt.core.workspace import Workspace
 
 UNSET = object()
@@ -298,11 +301,156 @@ def cmd_events_list(args: argparse.Namespace) -> None:
         events,
         [
             ("at", "AT"),
+            ("actor", "ACTOR"),
             ("kind", "KIND"),
             ("body", "BODY"),
             ("id", "ID"),
         ],
     )
+
+
+def cmd_sources_list(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        sources = [s.to_dict() for s in list_sources(ws)]
+    if args.json:
+        _dump_json({"sources": sources})
+        return
+    print_table(
+        sources,
+        [
+            ("id", "ID"),
+            ("name", "NAME"),
+            ("kind", "KIND"),
+            ("enabled", "ENABLED"),
+            ("last_run_at", "LAST RUN"),
+            ("last_status", "STATUS"),
+            ("listing_count", "LISTINGS"),
+            ("inbox_count", "INBOX"),
+        ],
+    )
+
+
+def cmd_sources_run(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        job = run_source(ws, args.id)
+        if args.run:
+            out = run_one(ws, job.id)
+            if args.json:
+                _dump_json(out)
+                return
+            print_kv(out["job"])
+            return
+        payload = {"job": job.to_dict()}
+    if args.json:
+        _dump_json(payload)
+        return
+    print_kv(payload["job"])
+
+
+def cmd_jobs_list(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        jobs = [
+            j.to_dict()
+            for j in list_jobs(
+                ws,
+                state=args.state,
+                job_type=args.type,
+                target_id=args.target,
+            )
+        ]
+    if args.json:
+        _dump_json({"jobs": jobs})
+        return
+    print_table(
+        jobs,
+        [
+            ("id", "ID"),
+            ("type", "TYPE"),
+            ("target_id", "TARGET"),
+            ("state", "STATE"),
+            ("created_at", "CREATED"),
+            ("error", "ERROR"),
+        ],
+    )
+
+
+def cmd_jobs_enqueue(args: argparse.Namespace) -> None:
+    payload: dict[str, Any] = {}
+    if args.payload:
+        parsed = json.loads(args.payload)
+        if not isinstance(parsed, dict):
+            raise HuntError("--payload must be a JSON object")
+        payload.update(parsed)
+    if args.emphasis:
+        payload["emphasis"] = args.emphasis
+    if args.variant:
+        payload["variant"] = args.variant
+    with _open(args) as ws:
+        job = enqueue_job(
+            ws, job_type=args.type, target_id=args.target, payload=payload or None
+        )
+        if args.run:
+            out = run_one(ws, job.id)
+            if args.json:
+                _dump_json(out)
+                return
+            print_kv(out["job"])
+            return
+        data = job.to_dict()
+    if args.json:
+        _dump_json({"job": data})
+        return
+    print_kv(data)
+
+
+def cmd_jobs_status(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        job = get_job(ws, args.id).to_dict()
+    if args.json:
+        _dump_json({"job": job})
+        return
+    print_kv(job)
+
+
+def cmd_jobs_run(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        out = run_one(ws, args.id)
+    if args.json:
+        _dump_json(out)
+        return
+    print_kv(out["job"])
+
+
+def cmd_jobs_worker(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        runs = drain(ws)
+    if args.json:
+        _dump_json({"runs": runs})
+        return
+    if not runs:
+        print("(none)")
+        return
+    print_table(
+        [r["job"] for r in runs],
+        [
+            ("id", "ID"),
+            ("type", "TYPE"),
+            ("state", "STATE"),
+            ("error", "ERROR"),
+        ],
+    )
+
+
+def cmd_mcp(args: argparse.Namespace) -> None:
+    from hunt.mcp import serve_stdio
+
+    serve_stdio(data_dir=getattr(args, "data", None))
+
+
+def cmd_serve(args: argparse.Namespace) -> None:
+    from hunt.http.app import serve
+
+    serve(data_dir=getattr(args, "data", None), host=args.host, port=args.port)
 
 
 def cmd_cv_render(args: argparse.Namespace) -> None:
@@ -421,6 +569,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_cv.add_argument("--emphasis")
     p_cv.add_argument("--variant")
     p_cv.set_defaults(func=cmd_cv_render)
+
+    sources = nouns.add_parser("sources", help="Configured source adapters")
+    src_verbs = sources.add_subparsers(dest="verb", required=True)
+    p_src_list = src_verbs.add_parser("list", help="List sources from config.yaml")
+    p_src_list.set_defaults(func=cmd_sources_list)
+    p_src_run = src_verbs.add_parser("run", help="Enqueue source-poll for a source")
+    p_src_run.add_argument("id")
+    p_src_run.add_argument(
+        "--run",
+        action="store_true",
+        help="Claim and execute the job immediately (still does not apply)",
+    )
+    p_src_run.set_defaults(func=cmd_sources_run)
+
+    jobs_p = nouns.add_parser("jobs", help="Job queue")
+    job_verbs = jobs_p.add_subparsers(dest="verb", required=True)
+    p_job_list = job_verbs.add_parser("list", help="List jobs")
+    p_job_list.add_argument("--state")
+    p_job_list.add_argument("--type")
+    p_job_list.add_argument("--target")
+    p_job_list.set_defaults(func=cmd_jobs_list)
+    p_job_en = job_verbs.add_parser("enqueue", help="Enqueue a job")
+    p_job_en.add_argument("--type", required=True, choices=list(JOB_TYPES))
+    p_job_en.add_argument("--target")
+    p_job_en.add_argument("--payload", help="JSON object merged into the job payload")
+    p_job_en.add_argument("--emphasis")
+    p_job_en.add_argument("--variant")
+    p_job_en.add_argument(
+        "--run",
+        action="store_true",
+        help="Claim and execute immediately",
+    )
+    p_job_en.set_defaults(func=cmd_jobs_enqueue)
+    p_job_st = job_verbs.add_parser("status", help="Get one job")
+    p_job_st.add_argument("id")
+    p_job_st.set_defaults(func=cmd_jobs_status)
+    p_job_run = job_verbs.add_parser("run", help="Claim and run one queued job")
+    p_job_run.add_argument("id", nargs="?")
+    p_job_run.set_defaults(func=cmd_jobs_run)
+    p_job_w = job_verbs.add_parser("worker", help="Drain the queued jobs (cli backend)")
+    p_job_w.set_defaults(func=cmd_jobs_worker)
+
+    nouns.add_parser("mcp", help="stdio MCP server").set_defaults(func=cmd_mcp)
+
+    serve_p = nouns.add_parser("serve", help="HTTP + UI on 127.0.0.1")
+    serve_p.add_argument("--host", default=None)
+    serve_p.add_argument("--port", type=int, default=None)
+    serve_p.set_defaults(func=cmd_serve)
 
     return parser
 

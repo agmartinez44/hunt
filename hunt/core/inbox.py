@@ -116,6 +116,49 @@ def get_inbox_item(ws: Workspace, item_id: str) -> InboxItem:
     return _row_to_item(row)
 
 
+def add_inbox_for_listing(
+    ws: Workspace,
+    listing_id: str,
+    *,
+    why_keep: str | None = None,
+    why_risk: str | None = None,
+    knockouts: list[str] | None = None,
+    commit: bool = True,
+) -> InboxItem:
+    existing = ws.conn.execute(
+        "SELECT id FROM inbox_items WHERE listing_id = ?", (listing_id,)
+    ).fetchone()
+    if existing:
+        return get_inbox_item(ws, existing["id"])
+    listing = ws.conn.execute(
+        "SELECT id FROM listings WHERE id = ?", (listing_id,)
+    ).fetchone()
+    if not listing:
+        raise NotFoundError(f"listing not found: {listing_id}")
+    now = now_iso()
+    item_id = new_id()
+    ws.conn.execute(
+        """
+        INSERT INTO inbox_items(
+            id, listing_id, status, why_keep, why_risk, knockouts_json,
+            application_id, created_at, updated_at
+        ) VALUES (?, ?, 'pending', ?, ?, ?, NULL, ?, ?)
+        """,
+        (
+            item_id,
+            listing_id,
+            why_keep,
+            why_risk,
+            json.dumps(list(knockouts or [])),
+            now,
+            now,
+        ),
+    )
+    if commit:
+        ws.conn.commit()
+    return get_inbox_item(ws, item_id)
+
+
 def add_item(
     ws: Workspace,
     *,
@@ -234,7 +277,7 @@ def promote(
     kwargs = _promote_kwargs(item, overrides)
     app = create_application(
         ws,
-        event_kind="promoted",
+        event_kind="promoted_from_inbox",
         event_body=f"inbox:{item.id}",
         commit=False,
         **kwargs,

@@ -1,40 +1,70 @@
 ---
 name: hunt-operator
-description: Operate Hunt's honesty-gated CV pipeline (render/finalize/verify, knowledge integrity). Use when generating or tailoring CVs in a Hunt workspace.
+description: Operate Hunt (applications, inbox, jobs, honesty-gated CVs) via CLI or MCP. Use when tracking a job search or generating CVs in a Hunt workspace.
 ---
 
 # Hunt Operator
 
-Deterministic, honesty-gated CV generation. The human owns facts; you own
-assembly; `hunt-cv verify` arbitrates. Full context: repo `AGENTS.md`,
-`docs/kb-guide.md`, `docs/tailoring.md`.
+The human owns facts. You own assembly and bookkeeping. Deterministic
+tooling (`hunt.core`, `hunt.cv`) arbitrates. Workspace data is `$HUNT_DATA`
+(or `--data`). Never write a real person's YAML, mail, or PDFs into the
+Hunt source tree.
 
-Workspace data is `$HUNT_DATA` (or `--data`). Never write a real person's
-YAML or PDFs into the Hunt source tree.
+Surfaces call the same domain layer: `hunt <noun> <verb> --json`,
+`hunt mcp` (stdio), later HTTP. Prefer `--json`. Exit non-zero is an error.
 
-## The loop (never skip a step)
+## Product loop
 
-1. Read `AGENTS.md` and any target `emphasis.yaml`.
-2. Render: `HUNT_DATA=<workspace> hunt-cv render [--emphasis <file>]`
-   - stderr lists excluded unverified achievements — report them to the
-     human; do not flip flags yourself.
-3. Finalize: `hunt-cv finalize <pdf>` — strips producer strings/dates.
-4. Verify: `hunt-cv verify <pdf> --json --expect "<keywords from JD>"`.
-5. Rasterize (`pdftoppm -png -r 100`) and VISUALLY inspect every page:
-   stub final pages (<40% full), overflow, overlap, cut-offs.
-6. Only then deliver. Text-pass alone is not verification.
+```
+source-poll → listings → screen-inbox → inbox
+    → promote | dismiss   (explicit; never inferred)
+    → application + attachments
+    → tailor-cv / cv render
+    → human submits outside Hunt
+```
 
-## KB changes
-
-- New fact → draft YAML under `$HUNT_DATA/knowledge/` with
-  `verified: false` → human confirms.
-- Suspect claims → run `hunt-cv verify --lint --json`; findings go back
-  to the human, never silently fixed by rewriting text to dodge the rule.
+Promote is the **only** listing → application path, including MCP.
+`applications create` is for a manual row, not for converting a listing.
 
 ## Hard rules
 
-- Never invent metrics, tools, ownership, or dates.
-- Tailor emphasis, never facts.
-- Neutral filenames; no JD phrasing echoes in headline/profile.
-- Contact details stay in `profile.yaml` only.
-- Never submit employer forms or send mail. Hunt does not apply.
+- Never invent metrics, employers, dates, tools, or ownership.
+- `verified: false` does not render. Do not flip the flag.
+- Tailor emphasis, never facts. Unknown emphasis keys fail the build.
+- Neutral filenames (`output_name`). Do not echo company/role/JD in the headline.
+- Contact details stay in `knowledge/profile.yaml` only.
+- **Never apply, never send mail.** Adapters are GET / IMAP PEEK only.
+  A PDF in attachments is not a submission.
+- Draft YAML ≠ verified YAML. New facts go in as `verified: false`.
+
+## MCP / CLI nouns
+
+| Tool | Notes |
+|---|---|
+| `applications_list/get/create/update` | Board CRUD |
+| `inbox_list/promote/dismiss` | Promote is explicit |
+| `jobs_enqueue/status/run` | Types: `source-poll`, `screen-inbox`, `tailor-cv` |
+| `cv_render` | Writes `$HUNT_DATA/attachments`; then finalize + verify |
+| `sources_list/run` | Run enqueues `source-poll`; does not promote |
+
+`jobs_enqueue` with `run: true` (CLI `--run`) claims and executes immediately.
+`worker.backend` `none` means you must run/drain jobs; `cli` is the in-process
+worker; Hermes is optional (see `docs/workers.md`).
+
+## CV gate (never skip)
+
+1. Read `AGENTS.md` and any `emphasis.yaml`.
+2. `hunt cv render --application ID` **or** enqueue `tailor-cv` with `--run`.
+3. `hunt-cv finalize <pdf>` — strips producer strings/dates.
+4. `hunt-cv verify <pdf> --json --expect "<keywords from JD>"`.
+5. Rasterize (`pdftoppm -png -r 100`) and visually inspect every page.
+6. Only then deliver. Text-pass alone is not verification.
+
+Stderr lists excluded unverified achievements — report them; do not fix by
+rewriting text to dodge the rule.
+
+## Inbox screening
+
+Knockouts are workspace data (`config.yaml` `knockouts`). Missing pay is
+`pay_unknown`, never invented. You may promote or dismiss when the user
+asked. You may not infer hire/reject from mail.

@@ -10,8 +10,10 @@ the Hunt repo.
 
 ```
 example-workspace/
-  config.yaml          # bind, FX stamp, tax_homes, floor (no secrets)
+  config.yaml          # bind, FX stamp, tax_homes, floor, sample sources (no secrets)
+  fixtures/            # fictional http_json payload for offline source-poll
   knowledge/           # honesty-gated YAML + integrity *values*
   store.sqlite         # created at runtime by hunt.core (gitignored)
   attachments/         # PDFs and application files (gitignored)
+  secrets.env          # gitignored; IMAP_* for imap_alerts if you enable it
 ```

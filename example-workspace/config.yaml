@@ -32,3 +32,32 @@ worker:
   backend: none
 cv:
   filename_pattern: "{name}_CV"
+# Workspace knockouts (data, not hardcoded in Hunt). Missing pay → pay_unknown.
+knockouts:
+  title_include: []
+  modality_block: []
+  engagement_allow: []
+  languages_block: []
+  drop_on: []
+# Fictional adapters. http_json uses the in-tree fixture, not a live board.
+# imap_alerts stays disabled until secrets.env provides IMAP_* credentials.
+sources:
+  - id: justjoin-sample
+    kind: http_json
+    name: JustJoin sample (offline fixture)
+    enabled: true
+    config:
+      profile: justjoin
+      path: fixtures/justjoin.json
+  - id: mail-alerts
+    kind: imap_alerts
+    name: Job alert mailbox
+    enabled: false
+    config:
+      folder: INBOX
+      host_env: IMAP_HOST
+      user_env: IMAP_USER
+      password_env: IMAP_PASSWORD
+      from_contains: ["jobs.example.org"]
+      subject_contains: ["job alert"]
+      company_default: Job alert

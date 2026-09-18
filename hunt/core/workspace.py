@@ -109,3 +109,71 @@ class Workspace:
     def comp_floor(self) -> dict[str, Any] | None:
         floor = self.config.get("comp_floor")
         return floor if isinstance(floor, dict) else None
+
+    @property
+    def worker_backend(self) -> str:
+        worker = self.config.get("worker") or {}
+        if not isinstance(worker, dict):
+            return "none"
+        backend = str(worker.get("backend") or "none").lower()
+        if backend not in {"none", "cli", "hermes"}:
+            return "none"
+        return backend
+
+    def knockout_rules(self) -> dict[str, Any]:
+        rules = self.config.get("knockouts") or {}
+        return rules if isinstance(rules, dict) else {}
+
+    def secrets(self) -> dict[str, str]:
+        from hunt.core.secrets import load_secrets
+
+        return load_secrets(self.root)
+
+    @property
+    def bind(self) -> str:
+        http = self.config.get("http") if isinstance(self.config.get("http"), dict) else {}
+        value = self.config.get("bind") or http.get("bind") or "127.0.0.1"
+        return str(value)
+
+    @property
+    def port(self) -> int:
+        http = self.config.get("http") if isinstance(self.config.get("http"), dict) else {}
+        value = self.config.get("port") if self.config.get("port") is not None else http.get("port")
+        try:
+            return int(value if value is not None else 8787)
+        except (TypeError, ValueError):
+            return 8787
+
+    @property
+    def auth_token(self) -> str | None:
+        token = self.config.get("auth_token")
+        if token:
+            return str(token)
+        auth = self.config.get("auth")
+        if isinstance(auth, dict) and auth.get("token"):
+            return str(auth["token"])
+        http = self.config.get("http")
+        if isinstance(http, dict) and http.get("token"):
+            return str(http["token"])
+        return None
+
+    @property
+    def sources_config(self) -> list[dict[str, Any]]:
+        raw = self.config.get("sources") or []
+        if not isinstance(raw, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for item in raw:
+            if isinstance(item, dict):
+                out.append(item)
+        return out
+
+    def profile_name(self) -> str | None:
+        path = self.root / "knowledge" / "profile.yaml"
+        if not path.is_file():
+            return None
+        loaded = yaml.safe_load(path.read_text()) or {}
+        if not isinstance(loaded, dict):
+            return None
+        name = loaded.get("name")
+        return str(name) if name else None

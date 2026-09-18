@@ -15,10 +15,13 @@ dependencies = [
   "pyyaml",
   "weasyprint",
   "pikepdf",
+  "fastapi",
+  "uvicorn",
+  "python-multipart",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [project.scripts]
 hunt = "hunt.cli:main"
@@ -29,6 +32,7 @@ include = ["hunt*"]
 
 [tool.setuptools.package-data]
 "hunt.cv" = ["template/*.j2"]
+"hunt.http" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

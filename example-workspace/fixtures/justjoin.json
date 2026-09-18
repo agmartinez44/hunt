@@ -1,0 +1,41 @@
+{
+  "data": [
+    {
+      "guid": "offer-acme-sre",
+      "title": "Staff SRE",
+      "companyName": "Acme Radar",
+      "slug": "acme-staff-sre",
+      "city": "Remote",
+      "countryCode": "US",
+      "workplaceType": "remote",
+      "experienceLevel": "senior",
+      "employmentTypes": [
+        {
+          "type": "b2b",
+          "currency": "USD",
+          "from": 50,
+          "to": 50,
+          "fromPerUnit": 50,
+          "toPerUnit": 50,
+          "unit": "hour",
+          "gross": false
+        }
+      ]
+    },
+    {
+      "guid": "offer-nohire",
+      "title": "Office Coordinator",
+      "companyName": "No Hire Inc",
+      "slug": "no-hire-office",
+      "city": "Berlin",
+      "countryCode": "DE",
+      "workplaceType": "office",
+      "experienceLevel": "mid",
+      "employmentTypes": []
+    }
+  ],
+  "meta": {
+    "totalItems": 2,
+    "next": {"cursor": null}
+  }
+}

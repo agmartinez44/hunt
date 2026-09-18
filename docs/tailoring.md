@@ -1,8 +1,8 @@
 # Tailoring workflow (emphasis, never facts)
 
-Hunt stores applications in SQLite (later). Until then, tailor by writing
-an `emphasis.yaml` **in your workspace** (not in this git repo) and passing
-it to render.
+Applications live in SQLite under `$HUNT_DATA`. Tailor by writing an
+`emphasis.yaml` **in your workspace** (not in this git repo) and passing
+it to render, or by enqueueing `tailor-cv` for an application id.
 
 ## 1. Read the posting as input, not as text to echo
 
@@ -48,5 +48,5 @@ not sufficient.
 
 ## 4. A PDF is not a send
 
-Hunt does not submit applications or send mail. Record sends outside the
-PDF pipeline (later: application events in SQLite).
+Hunt does not submit applications or send mail. Record a send as an
+application status/event after the human actually submitted.

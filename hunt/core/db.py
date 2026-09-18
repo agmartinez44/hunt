@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS events (
     application_id TEXT NOT NULL REFERENCES applications(id),
     kind TEXT NOT NULL,
     body TEXT,
+    actor TEXT NOT NULL DEFAULT 'cli',
     at TEXT NOT NULL
 );
 
@@ -96,6 +97,9 @@ CREATE TABLE IF NOT EXISTS listings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_listings_source ON listings(source_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_source_external
+ON listings(source_id, external_id)
+WHERE source_id IS NOT NULL AND external_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS inbox_items (
     id TEXT PRIMARY KEY,
@@ -110,6 +114,22 @@ CREATE TABLE IF NOT EXISTS inbox_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbox_status ON inbox_items(status);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    state TEXT NOT NULL,
+    target_id TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT,
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 """
 
 
@@ -124,8 +144,29 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_V1)
+    cols = _columns(conn, "events")
+    if "actor" not in cols:
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN actor TEXT NOT NULL DEFAULT 'cli'"
+        )
+    job_cols = _columns(conn, "jobs")
+    if "result_json" not in job_cols:
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN result_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_source_external
+        ON listings(source_id, external_id)
+        WHERE source_id IS NOT NULL AND external_id IS NOT NULL
+        """
+    )
     row = conn.execute(
         "SELECT MAX(version) AS v FROM schema_migrations"
     ).fetchone()
