@@ -12,6 +12,10 @@ from hunt.core.listings import Listing, get_listing, list_listings
 from hunt.core.workspace import Workspace
 
 _MAILBOX_COMPANIES = {"linkedin", "job alert", "imap", "mail"}
+PASSED_WORKSPACE_KNOCKOUTS = "passed workspace knockouts"
+_SCREEN_KNOCKOUT_CODES = frozenset(
+    {"pay_unknown", "title", "modality", "engagement", "language"}
+)
 
 
 def _enrich_listing_from_subject(ws: Workspace, listing: Listing) -> Listing:
@@ -88,6 +92,65 @@ def evaluate_knockouts(
     return ordered
 
 
+def _knockout_code_set(*groups: list[str] | None) -> set[str]:
+    codes = set(_SCREEN_KNOCKOUT_CODES)
+    for group in groups:
+        if group:
+            codes.update(str(item) for item in group)
+    return codes
+
+
+def is_boilerplate_why(
+    value: str | None, *knockout_groups: list[str] | None
+) -> bool:
+    """True when *value* is empty or machine knockout boilerplate.
+
+    Agent/human notes (company, role, geo, net) are not boilerplate.
+    Joined knockout codes only (``pay_unknown``, ``pay_unknown, title``)
+    are, so a later refresh can replace them.
+    """
+    text = (value or "").strip()
+    if not text or text == PASSED_WORKSPACE_KNOCKOUTS:
+        return True
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if not parts:
+        return True
+    known = _knockout_code_set(*knockout_groups)
+    return all(part in known for part in parts)
+
+
+def _why_for_knockouts(knockouts: list[str]) -> tuple[str | None, str | None]:
+    why_risk = ", ".join(knockouts) if knockouts else None
+    why_keep = None if knockouts else PASSED_WORKSPACE_KNOCKOUTS
+    return why_keep, why_risk
+
+
+def _merge_why(
+    existing_keep: str | None,
+    existing_risk: str | None,
+    new_keep: str | None,
+    new_risk: str | None,
+    existing_knockouts: list[str] | None,
+    knockouts: list[str] | None,
+) -> tuple[str | None, str | None]:
+    keep = (
+        new_keep
+        if is_boilerplate_why(existing_keep, existing_knockouts, knockouts)
+        else existing_keep
+    )
+    risk = (
+        new_risk
+        if is_boilerplate_why(existing_risk, existing_knockouts, knockouts)
+        else existing_risk
+    )
+    return keep, risk
+
+
+def _existing_knockouts(row: Any) -> list[str]:
+    parsed = json.loads(row["knockouts_json"] or "[]")
+    return parsed if isinstance(parsed, list) else []
+
+
 def screen_listing(ws: Workspace, listing: Listing) -> dict[str, Any]:
     listing = _enrich_listing_from_subject(ws, listing)
     knockouts = evaluate_knockouts(
@@ -95,15 +158,25 @@ def screen_listing(ws: Workspace, listing: Listing) -> dict[str, Any]:
     )
     drop_on = {str(x) for x in (ws.knockout_rules().get("drop_on") or []) if x}
     existing = ws.conn.execute(
-        "SELECT id, status FROM inbox_items WHERE listing_id = ?",
+        """
+        SELECT id, status, why_keep, why_risk, knockouts_json
+        FROM inbox_items WHERE listing_id = ?
+        """,
         (listing.id,),
     ).fetchone()
     if drop_on and set(knockouts) & drop_on and existing is None:
         return {"listing_id": listing.id, "dropped": True, "knockouts": knockouts}
-    why_risk = ", ".join(knockouts) if knockouts else None
-    why_keep = None if knockouts else "passed workspace knockouts"
+    why_keep, why_risk = _why_for_knockouts(knockouts)
     if existing:
         if existing["status"] == "pending":
+            why_keep, why_risk = _merge_why(
+                existing["why_keep"],
+                existing["why_risk"],
+                why_keep,
+                why_risk,
+                _existing_knockouts(existing),
+                knockouts,
+            )
             item = refresh_inbox_for_listing(
                 ws,
                 listing.id,

@@ -226,7 +226,11 @@ def refresh_inbox_for_listing(
     knockouts: list[str] | None = None,
     commit: bool = True,
 ) -> InboxItem:
-    """Update knockouts on a pending inbox row. Does not duplicate or promote."""
+    """Update knockouts on a pending inbox row. Does not duplicate or promote.
+
+    Writes the given why_keep / why_risk. Screening preserves non-boilerplate
+    notes before calling this.
+    """
     existing = ws.conn.execute(
         "SELECT id, status FROM inbox_items WHERE listing_id = ?",
         (listing_id,),
