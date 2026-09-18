@@ -256,6 +256,41 @@ def test_ui_has_no_apply_controls():
     assert 'data-primitive="AppTabBar"' in js
 
 
+def test_ui_dark_mode_boot_and_tokens():
+    """AGU-43 / AGU-42 spec: Light/Dark/System, no-FOUC boot, dark tokens, traps."""
+    static = ROOT / "hunt" / "http" / "static"
+    js = (static / "app.js").read_text()
+    css = (static / "hunt.css").read_text()
+    html = (static / "index.html").read_text()
+    assert "--bg: #f3f0ea" in css
+    assert "--bg: #1a1814" in css
+    assert 'html[data-theme="dark"]' in css
+    assert "--scrim:" in css
+    assert "--toast-bg:" in css
+    assert "--toast-fg:" in css
+    assert "--accent-hover:" in css
+    assert "var(--scrim)" in css.split(".scrim")[1][:400]
+    assert "#1b1814" not in css.split(".scrim")[1].split("}")[0]
+    assert "var(--toast-bg)" in css.split('[data-primitive="Toast"]')[1][:400]
+    assert "var(--toast-fg)" in css.split('[data-primitive="Toast"]')[1][:400]
+    assert "filter: brightness" not in css
+    assert "background: var(--accent-hover)" in css
+    assert 'data-primitive="ThemeToggle"' in js
+    assert 'data-primitive="ThemeMenu"' in js
+    assert 'data-primitive="ThemePicker"' in js
+    assert "hunt.theme" in html
+    assert "hunt.theme" in js
+    assert html.index("<script>") < html.index('href="/static/hunt.css"')
+    assert 'setAttribute("data-theme", theme)' in html
+    assert "root.style.colorScheme = theme" in html
+    assert 'KEY = "hunt.theme"' in html
+    assert "Match the device" in js
+    assert "Theme: System" in js
+    assert "This browser only. Hunt does not store theme in the workspace." in js
+    assert "prefers-color-scheme: dark" in js
+    assert 'event.key !== THEME_KEY' in js or 'ev.key !== THEME_KEY' in js
+
+
 def test_ui_visual_followup_mira_agu7():
     """Mira AGU-7 changes-requested: mobile cards, density, sticky-save, jobs filters."""
     js = (ROOT / "hunt" / "http" / "static" / "app.js").read_text()

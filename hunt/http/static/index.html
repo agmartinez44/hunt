@@ -4,6 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Hunt</title>
+  <script>
+  (function () {
+    var KEY = "hunt.theme";
+    var pref = "system";
+    try {
+      pref = localStorage.getItem(KEY) || "system";
+    } catch (e) {}
+    if (pref !== "light" && pref !== "dark" && pref !== "system") pref = "system";
+    var dark = pref === "dark" || (
+      pref === "system" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+    );
+    var theme = dark ? "dark" : "light";
+    var root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    root.style.colorScheme = theme;
+  })();
+  </script>
   <link rel="stylesheet" href="/static/hunt.css">
 </head>
 <body>

@@ -22,6 +22,23 @@
   const JOB_TYPES = ["source-poll", "screen-inbox", "tailor-cv"];
   const JOB_STATES = ["queued", "running", "done", "failed"];
   const TOKEN_KEY = "hunt_token";
+  const THEME_KEY = "hunt.theme";
+  const THEME_PREFS = ["light", "dark", "system"];
+  const THEME_ICONS = {
+    light: `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="2.75" fill="currentColor"/>
+      <g stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none">
+        <path d="M8 1.75v1.25M8 13v1.25M1.75 8H3M13 8h1.25M3.5 3.5l.9.9M11.6 11.6l.9.9M3.5 12.5l.9-.9M11.6 4.4l.9-.9"/>
+      </g>
+    </svg>`,
+    dark: `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M11.1 10.6A5.4 5.4 0 0 1 6.4 3.1 6.8 6.8 0 1 0 13.1 9.7a5.2 5.2 0 0 1-2 0.9z"/>
+    </svg>`,
+    system: `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path fill="currentColor" d="M8 2.5a5.5 5.5 0 0 0 0 11V2.5z"/>
+    </svg>`,
+  };
   const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"];
   const INBOX_COLS = ["Company", "Role", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
@@ -112,6 +129,163 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function readThemePref() {
+    try {
+      const value = localStorage.getItem(THEME_KEY);
+      if (value === "light" || value === "dark" || value === "system") return value;
+    } catch {
+      /* private mode — keep in-memory preference */
+    }
+    return "system";
+  }
+
+  function writeThemePref(pref) {
+    try {
+      localStorage.setItem(THEME_KEY, pref);
+    } catch {
+      /* private mode — session-only */
+    }
+  }
+
+  function osPrefersDark() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+
+  function resolveTheme(pref) {
+    if (pref === "light" || pref === "dark") return pref;
+    return osPrefersDark() ? "dark" : "light";
+  }
+
+  function applyTheme(pref) {
+    const resolved = resolveTheme(pref);
+    const root = document.documentElement;
+    root.setAttribute("data-theme", resolved);
+    root.style.colorScheme = resolved;
+    return resolved;
+  }
+
+  function themeLabel(pref, resolved) {
+    if (pref === "system") {
+      return `Theme: System (${resolved === "dark" ? "Dark" : "Light"})`;
+    }
+    return pref === "dark" ? "Theme: Dark" : "Theme: Light";
+  }
+
+  let themePref = readThemePref();
+  let themeMenuOpen = false;
+
+  function setThemePref(pref) {
+    if (pref !== "light" && pref !== "dark" && pref !== "system") pref = "system";
+    themePref = pref;
+    writeThemePref(pref);
+    applyTheme(pref);
+    syncThemeControls();
+  }
+
+  function syncThemeControls() {
+    const pref = themePref;
+    const resolved = resolveTheme(pref);
+    const label = themeLabel(pref, resolved);
+    document.querySelectorAll("[data-primitive=ThemeToggle]").forEach((btn) => {
+      btn.setAttribute("data-theme-preference", pref);
+      btn.setAttribute("data-theme-resolved", resolved);
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+      btn.innerHTML = THEME_ICONS[pref];
+    });
+    document.querySelectorAll("[data-primitive=ThemeMenu] [data-theme-option]").forEach((item) => {
+      const on = item.getAttribute("data-theme-option") === pref;
+      item.setAttribute("aria-checked", on ? "true" : "false");
+      item.tabIndex = on ? 0 : -1;
+      const check = item.querySelector(".theme-menu-check");
+      if (check) check.textContent = on ? "✓" : "";
+    });
+    document.querySelectorAll("[data-primitive=ThemePicker] [data-theme-pref]").forEach((chip) => {
+      chip.setAttribute("aria-pressed", chip.getAttribute("data-theme-pref") === pref ? "true" : "false");
+    });
+  }
+
+  function closeThemeMenu(restoreFocus) {
+    const host = document.querySelector(".theme-toggle-host");
+    document.querySelectorAll("[data-primitive=ThemeMenu]").forEach((menu) => {
+      menu.hidden = true;
+      menu.style.position = "";
+      menu.style.top = "";
+      menu.style.right = "";
+      menu.style.left = "";
+      menu.style.visibility = "";
+      if (host && menu.parentElement !== host) host.appendChild(menu);
+    });
+    document.querySelectorAll("[data-primitive=ThemeToggle]").forEach((btn) => {
+      const wasOpen = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", "false");
+      if (restoreFocus && wasOpen) btn.focus();
+    });
+    themeMenuOpen = false;
+  }
+
+  function openThemeMenu(btn) {
+    const host = btn.closest(".theme-toggle-host");
+    const menu = (host && host.querySelector("[data-primitive=ThemeMenu]"))
+      || document.querySelector("[data-primitive=ThemeMenu]");
+    if (!menu) return;
+    const opening = btn.getAttribute("aria-expanded") !== "true";
+    closeThemeMenu();
+    if (!opening) return;
+    themeMenuOpen = true;
+    btn.setAttribute("aria-expanded", "true");
+    const rect = btn.getBoundingClientRect();
+    document.body.appendChild(menu);
+    menu.hidden = false;
+    menu.style.position = "fixed";
+    menu.style.visibility = "hidden";
+    menu.style.top = "0";
+    menu.style.left = "0";
+    menu.style.right = "auto";
+    const mw = menu.offsetWidth;
+    const margin = 8;
+    let left = rect.right - mw;
+    if (left < margin) left = margin;
+    if (left + mw > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - mw - margin);
+    }
+    menu.style.top = `${Math.round(rect.bottom + 4)}px`;
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.visibility = "";
+    const checked = menu.querySelector('[aria-checked="true"]');
+    if (checked) checked.focus();
+  }
+
+  function ThemeToggle() {
+    const pref = themePref;
+    const resolved = resolveTheme(pref);
+    const label = themeLabel(pref, resolved);
+    const items = THEME_PREFS.map((id) => {
+      const name = id === "light" ? "Light" : id === "dark" ? "Dark" : "System";
+      const checked = pref === id;
+      const help = id === "system"
+        ? `<span class="theme-menu-help" aria-hidden="true">Match the device</span>`
+        : "";
+      return `<div role="menuitemradio" data-theme-option="${id}" aria-checked="${checked}" tabindex="${checked ? "0" : "-1"}">
+        <span class="theme-menu-check" aria-hidden="true">${checked ? "✓" : ""}</span>
+        <span class="theme-menu-copy"><span>${name}</span>${help}</span>
+      </div>`;
+    }).join("");
+    return `<div class="theme-toggle-host">
+      <button type="button" data-primitive="ThemeToggle" data-theme-preference="${pref}" data-theme-resolved="${resolved}" aria-haspopup="menu" aria-expanded="false" aria-controls="hunt-theme-menu" aria-label="${esc(label)}" title="${esc(label)}">${THEME_ICONS[pref]}</button>
+      <div data-primitive="ThemeMenu" id="hunt-theme-menu" role="menu" aria-label="Theme" hidden>${items}</div>
+    </div>`;
+  }
+
+  function ThemePicker() {
+    const pref = themePref;
+    const chips = THEME_PREFS.map((id) => {
+      const name = id === "light" ? "Light" : id === "dark" ? "Dark" : "System";
+      return `<button type="button" data-primitive="FilterChip" data-theme-pref="${id}" aria-pressed="${pref === id}">${name}</button>`;
+    }).join("");
+    return `<div data-primitive="ThemePicker">${chips}</div>`;
   }
 
   function token() {
@@ -483,6 +657,7 @@
         <a class="wordmark" href="/">Hunt</a>
         <nav class="appbar-nav appbar-nav-desktop">${items}</nav>
         ${chip}
+        ${ThemeToggle()}
         ${agentNav}
       </header>`,
       tabs: `<nav data-primitive="AppTabBar"><div class="appbar-nav">${items}</div></nav>`,
@@ -521,6 +696,7 @@
 
   function AuthGate(message) {
     return `<div data-primitive="AuthGate">
+      ${ThemeToggle()}
       <h1>Hunt</h1>
       <p class="muted">${esc(message || "This workspace requires a token.")}</p>
       <form id="auth-form">
@@ -2015,6 +2191,13 @@
       <div class="agent-page">
         <div class="agent-span">${AgentStatus()}</div>
         ${banner ? `<div class="agent-span">${banner}</div>` : ""}
+        <div class="agent-span">
+        <section data-primitive="AgentSection" class="section">
+          <h2>Appearance</h2>
+          <p class="help">This browser only. Hunt does not store theme in the workspace.</p>
+          ${ThemePicker()}
+        </section>
+        </div>
         <section data-primitive="AgentSection" class="section">
           <h2>Harness</h2>
           <p class="help">${esc(harnessHelp)}</p>
@@ -2230,6 +2413,7 @@
   }
 
   async function render() {
+    closeThemeMenu();
     const root = document.getElementById("app");
     const prev = state.route;
     state.route = parseRoute();
@@ -2324,6 +2508,28 @@
   }
 
   document.addEventListener("click", async (ev) => {
+    const themeToggle = ev.target.closest("[data-primitive=ThemeToggle]");
+    if (themeToggle) {
+      ev.preventDefault();
+      openThemeMenu(themeToggle);
+      return;
+    }
+    const themeOption = ev.target.closest("[data-theme-option]");
+    if (themeOption) {
+      ev.preventDefault();
+      setThemePref(themeOption.getAttribute("data-theme-option"));
+      closeThemeMenu(true);
+      return;
+    }
+    const themeChip = ev.target.closest("[data-theme-pref]");
+    if (themeChip) {
+      ev.preventDefault();
+      setThemePref(themeChip.getAttribute("data-theme-pref"));
+      return;
+    }
+    if (themeMenuOpen && !ev.target.closest("[data-primitive=ThemeMenu]")) {
+      closeThemeMenu();
+    }
     const a = ev.target.closest("a[href], a[data-nav]");
     if (a) {
       if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
@@ -2999,6 +3205,52 @@
   });
 
   document.addEventListener("keydown", (ev) => {
+    const themeMenu = ev.target.closest("[data-primitive=ThemeMenu]");
+    if (themeMenu && !themeMenu.hidden) {
+      const items = [...themeMenu.querySelectorAll("[data-theme-option]")];
+      const current = ev.target.closest("[data-theme-option]");
+      const idx = items.indexOf(current);
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeThemeMenu(true);
+        return;
+      }
+      if (ev.key === "ArrowDown" || ev.key === "ArrowRight") {
+        ev.preventDefault();
+        const next = items[(Math.max(idx, 0) + 1) % items.length];
+        if (next) next.focus();
+        return;
+      }
+      if (ev.key === "ArrowUp" || ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        const prev = items[(idx <= 0 ? items.length : idx) - 1];
+        if (prev) prev.focus();
+        return;
+      }
+      if (ev.key === "Home") {
+        ev.preventDefault();
+        if (items[0]) items[0].focus();
+        return;
+      }
+      if (ev.key === "End") {
+        ev.preventDefault();
+        if (items.length) items[items.length - 1].focus();
+        return;
+      }
+      if (ev.key === "Enter" || ev.key === " ") {
+        if (current) {
+          ev.preventDefault();
+          setThemePref(current.getAttribute("data-theme-option"));
+          closeThemeMenu(true);
+        }
+        return;
+      }
+    }
+    if (ev.key === "Escape" && themeMenuOpen) {
+      ev.preventDefault();
+      closeThemeMenu(true);
+      return;
+    }
     if (ev.key === "Escape" && state.dialog) {
       state.dialog = null;
       render();
@@ -3048,6 +3300,25 @@
   window.addEventListener("popstate", render);
   window.addEventListener("focus", () => {
     if (state.route.name) render();
+  });
+
+  applyTheme(themePref);
+  const schemeMq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  if (schemeMq) {
+    const onScheme = () => {
+      if (themePref === "system") {
+        applyTheme(themePref);
+        syncThemeControls();
+      }
+    };
+    if (schemeMq.addEventListener) schemeMq.addEventListener("change", onScheme);
+    else if (schemeMq.addListener) schemeMq.addListener(onScheme);
+  }
+  window.addEventListener("storage", (ev) => {
+    if (ev.key !== THEME_KEY) return;
+    themePref = readThemePref();
+    applyTheme(themePref);
+    syncThemeControls();
   });
 
   render();
