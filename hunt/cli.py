@@ -50,6 +50,7 @@ from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.worker import drain, run_one
+from hunt.agent.config import HARNESSES, OPENCODE_INSTALL_COMMAND
 from hunt.core.workspace import Workspace
 
 UNSET = object()
@@ -859,6 +860,83 @@ def cmd_integrity_update(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_agent_install(args: argparse.Namespace) -> None:
+    from hunt.agent.install import install as install_agent
+
+    result = install_agent(
+        harness=args.harness,
+        data_dir=getattr(args, "data", None),
+        root=getattr(args, "root", None),
+        home=getattr(args, "home", None),
+        role=getattr(args, "role", None),
+    )
+    if args.json:
+        _dump_json(result)
+        return
+    print_kv(
+        {
+            "harness": result["harness"],
+            "roles": ", ".join(result["roles"]),
+            "files": len(result["files"]),
+            "note": result["note"],
+        }
+    )
+    print_table(
+        [{"path": path} for path in result["files"]],
+        [("path", "WROTE")],
+    )
+
+
+def cmd_agent_doctor(args: argparse.Namespace) -> None:
+    from hunt.agent.doctor import doctor as run_doctor
+
+    with _open(args) as ws:
+        report = run_doctor(
+            ws,
+            root=getattr(args, "root", None),
+            home=getattr(args, "home", None),
+            timeout=float(getattr(args, "timeout", 3.0) or 3.0),
+        )
+    if args.json:
+        _dump_json(report)
+    else:
+        print_table(
+            [
+                {"check": row["id"], "ok": row["ok"], "detail": row["detail"]}
+                for row in report["checks"]
+            ],
+            [("check", "CHECK"), ("ok", "OK"), ("detail", "DETAIL")],
+        )
+        for warning in report.get("warnings") or []:
+            print(f"warning  {warning}")
+    if not report["ok"]:
+        raise HuntError("doctor found problems")
+
+
+def cmd_agent_run(args: argparse.Namespace) -> None:
+    from hunt.agent.run import exec_run, prepare_run, runner_env
+
+    with _open(args) as ws:
+        plan = prepare_run(
+            ws,
+            args.role,
+            root=getattr(args, "root", None),
+        )
+        env = runner_env(ws)
+    if args.json:
+        _dump_json(plan)
+        sys.stdout.flush()
+    elif plan.get("ok"):
+        print(" ".join(plan["command"]))
+    else:
+        print(plan.get("install") or OPENCODE_INSTALL_COMMAND)
+    if not plan.get("ok"):
+        raise HuntError("no supported harness on PATH")
+    if getattr(args, "dry_run", False):
+        return
+    exec_run(plan, env)
+
+
 def cmd_cv_render(args: argparse.Namespace) -> None:
     with _open(args) as ws:
         result = render_cv(
@@ -1164,6 +1242,59 @@ def build_parser() -> argparse.ArgumentParser:
     p_job_w.set_defaults(func=cmd_jobs_worker)
 
     nouns.add_parser("mcp", help="stdio MCP server").set_defaults(func=cmd_mcp)
+
+    agent = nouns.add_parser(
+        "agent",
+        help="Install Hunt packs into an existing harness (not a Hunt runner)",
+    )
+    agent_verbs = agent.add_subparsers(dest="verb", required=True)
+    p_agent_in = agent_verbs.add_parser(
+        "install",
+        help="Write Hunt MCP + role skills into a harness you already run",
+    )
+    p_agent_in.add_argument(
+        "--harness",
+        required=True,
+        choices=list(HARNESSES),
+        help="claude, cursor, codex, opencode, openclaw, or paperclip",
+    )
+    p_agent_in.add_argument(
+        "--role",
+        choices=["operator", "screener", "all"],
+        default="all",
+        help="Which pack to copy (default: both)",
+    )
+    p_agent_in.add_argument("--root", help="Project directory for harness files")
+    p_agent_in.add_argument(
+        "--home",
+        help="Override home for user-level files (Codex ~/.codex)",
+    )
+    p_agent_in.set_defaults(func=cmd_agent_install)
+    p_agent_doc = agent_verbs.add_parser(
+        "doctor",
+        help="Check workspace, MCP, skills, and GET {base_url}/models",
+    )
+    p_agent_doc.add_argument("--root", help="Project directory to scan")
+    p_agent_doc.add_argument("--home", help="Override home for user-level files")
+    p_agent_doc.add_argument(
+        "--timeout",
+        type=float,
+        default=3.0,
+        help="Seconds to wait for GET /v1/models",
+    )
+    p_agent_doc.set_defaults(func=cmd_agent_doctor)
+    p_agent_run = agent_verbs.add_parser(
+        "run",
+        help="Exec OpenCode, then Claude Code / Codex; does not vendor a loop",
+    )
+    p_agent_run.add_argument("role", choices=["operator", "screener"])
+    p_agent_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the runner command without exec",
+    )
+    p_agent_run.add_argument("--root", help="cwd for the runner")
+    p_agent_run.set_defaults(func=cmd_agent_run)
 
     serve_p = nouns.add_parser("serve", help="HTTP + UI on 127.0.0.1")
     serve_p.add_argument("--host", default=None)

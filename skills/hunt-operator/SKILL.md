@@ -13,6 +13,12 @@ Hunt source tree.
 Surfaces call the same domain layer: `hunt <noun> <verb> --json`,
 `hunt mcp` (stdio), later HTTP. Prefer `--json`. Exit non-zero is an error.
 
+Hunt is packs + an installer, not a harness. Plug into a tool you already
+run (`hunt agent install --harness claude|cursor|codex|opencode|openclaw|paperclip`),
+or paste `XAI_API_KEY` / a local OpenAI-compat URL and `hunt agent run operator`.
+`run` execs OpenCode, then Claude Code / Codex. It does not vendor a loop.
+Screener pack: `skills/hunt-screener` — propose only; never promote unless asked.
+
 ## Product loop
 
 ```

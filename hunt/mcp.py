@@ -318,6 +318,48 @@ TOOLS: list[dict[str, Any]] = [
         },
     ),
     _tool("integrity_get", "Get integrity rules. Agents cannot write this file.", {}),
+    _tool(
+        "agent_install",
+        "Write Hunt MCP + role skills into an existing harness. Hunt does not run a tool loop.",
+        {
+            "harness": {
+                "type": "string",
+                "enum": [
+                    "claude",
+                    "cursor",
+                    "codex",
+                    "opencode",
+                    "openclaw",
+                    "paperclip",
+                ],
+            },
+            "role": {
+                "type": "string",
+                "enum": ["operator", "screener", "all"],
+            },
+            "root": {"type": "string"},
+            "home": {"type": "string"},
+        },
+        ["harness"],
+    ),
+    _tool(
+        "agent_doctor",
+        "Check workspace, installed MCP/skill, and GET /v1/models on agent.model.base_url.",
+        {
+            "root": {"type": "string"},
+            "home": {"type": "string"},
+            "timeout": {"type": "number"},
+        },
+    ),
+    _tool(
+        "agent_run",
+        "Detect OpenCode → Claude Code / Codex and return the exec plan. Does not start a Hunt loop.",
+        {
+            "role": {"type": "string", "enum": ["operator", "screener"]},
+            "root": {"type": "string"},
+        },
+        ["role"],
+    ),
 ]
 
 
@@ -546,6 +588,40 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         return _ok({"skills": update_skills(ws, fields)})
     if name == "integrity_get":
         return _ok({"integrity": get_integrity(ws)})
+    if name == "agent_install":
+        from hunt.agent.install import install as install_agent
+
+        return _ok(
+            install_agent(
+                harness=str(arguments["harness"]),
+                data_dir=ws.root,
+                root=arguments.get("root"),
+                home=arguments.get("home"),
+                role=arguments.get("role"),
+            )
+        )
+    if name == "agent_doctor":
+        from hunt.agent.doctor import doctor as run_doctor
+
+        timeout = arguments.get("timeout")
+        return _ok(
+            run_doctor(
+                ws,
+                root=arguments.get("root"),
+                home=arguments.get("home"),
+                timeout=float(timeout) if timeout is not None else 3.0,
+            )
+        )
+    if name == "agent_run":
+        from hunt.agent.run import prepare_run
+
+        return _ok(
+            prepare_run(
+                ws,
+                str(arguments.get("role") or "operator"),
+                root=arguments.get("root"),
+            )
+        )
     return _err(f"unknown tool: {name}")
 
 

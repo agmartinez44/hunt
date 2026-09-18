@@ -42,6 +42,19 @@ This repository is **code**. Workspace data lives in `$HUNT_DATA`.
   (or `--data`). Never commit a real person's YAML, mail, or PDFs.
 - `example-workspace/` is a fictional persona for tests and docs.
 
+## Harness
+
+Hunt ships operator and screener packs under `skills/`. Install them into
+a tool you already run; Hunt does not implement a tool loop.
+
+```
+hunt agent install --harness opencode   # also claude, cursor, codex, openclaw, paperclip
+hunt agent doctor --json
+hunt agent run operator
+```
+
+`run` execs OpenCode, then Claude Code / Codex. Paperclip is optional.
+
 ## Machine-readable workflow contract
 
 - Emphasis schema: `ALLOWED_EMPHASIS_KEYS` in `hunt/cv/render.py`.

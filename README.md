@@ -97,11 +97,43 @@ Golden test (proves the unverified bullet stays out of the PDF):
 .venv/bin/python -m pytest tests/test_golden.py
 ```
 
-## Agents
+## Agents (packs, not a Hunt harness)
 
-Read `AGENTS.md`, then `skills/hunt-operator/SKILL.md`. Draft facts as
-`verified: false`; only the human flips them. Never invent metrics. Never
-submit an application or send mail. Worker backends: `docs/workers.md`.
+Hunt does **not** run a ReAct loop, session manager, or tool dispatcher.
+You bring a harness you already use, or paste a token / local OpenAI-compat
+URL and exec the documented default runner (OpenCode).
+
+```bash
+# 1. Point $HUNT_DATA at a workspace copy, then install MCP + skills:
+.venv/bin/hunt agent install --harness claude     # also: cursor, opencode, codex, openclaw, paperclip
+.venv/bin/hunt agent install --harness cursor
+.venv/bin/hunt agent install --harness opencode
+
+# 2. Hosted default is SpaceXAI / xAI. Key in $HUNT_DATA/secrets.env, never in git:
+#    XAI_API_KEY=...
+#    agent.model.base_url: https://api.x.ai/v1
+#    agent.model.model: grok-4.5
+#
+#    Or BYO local llama.cpp (api_key_env can be empty):
+#    agent.model.base_url: http://127.0.0.1:8080/v1
+
+.venv/bin/hunt agent doctor --json    # workspace + MCP + skill + GET /v1/models
+.venv/bin/hunt agent run operator --dry-run
+```
+
+`hunt agent run <operator|screener>` detects a runner in this order:
+**OpenCode → Claude Code / Codex**. If none are on `PATH`, it prints **one**
+OpenCode install command (`curl -fsSL https://opencode.ai/install | bash`)
+and exits. Paperclip is optional company OS, not a Hunt dependency.
+
+Packs:
+
+- `skills/hunt-operator` — board, facts, CV gate, never apply/send
+- `skills/hunt-screener` — standardize, prefilter, **propose**; never promote unless asked
+
+Read `AGENTS.md` and the pack `SKILL.md` before driving a workspace. Draft
+facts as `verified: false`; only the human flips them. Never invent metrics.
+Never submit an application or send mail. Worker backends: `docs/workers.md`.
 
 ## License
 

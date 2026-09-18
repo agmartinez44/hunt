@@ -63,6 +63,16 @@ worker:
   backend: none
 cv:
   filename_pattern: "{name}_CV"
+# Default runner is a harness you already run (OpenCode / Claude / Codex).
+# Hunt does not vendor a tool loop. Hosted default is SpaceXAI / xAI.
+# Put XAI_API_KEY in secrets.env (never plaintext here). BYO = any
+# OpenAI-compat URL, e.g. local llama.cpp at http://127.0.0.1:8080/v1.
+agent:
+  harness: auto   # auto | opencode | claude | cursor | codex | paperclip | openclaw
+  model:
+    base_url: https://api.x.ai/v1
+    api_key_env: XAI_API_KEY
+    model: grok-4.5
 # Workspace knockouts (data, not hardcoded in Hunt). Missing pay → pay_unknown.
 knockouts:
   title_include: []
