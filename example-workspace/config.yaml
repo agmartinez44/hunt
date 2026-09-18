@@ -80,7 +80,8 @@ knockouts:
   engagement_allow: []
   languages_block: []
   drop_on: []
-# Fictional adapters. http_json uses the in-tree fixture, not a live board.
+# Fictional adapters. http_json uses in-tree fixtures, not live boards.
+# Drop `path` on remotive-eu / landing-jobs-eu to poll the live GET APIs.
 # imap_alerts stays disabled until secrets.env provides IMAP_* credentials.
 sources:
   - id: justjoin-sample
@@ -90,6 +91,20 @@ sources:
     config:
       profile: justjoin
       path: fixtures/justjoin.json
+  - id: remotive-eu
+    kind: http_json
+    name: Remotive EU / Europe remote IT
+    enabled: true
+    config:
+      profile: remotive
+      path: fixtures/remotive.json
+  - id: landing-jobs-eu
+    kind: http_json
+    name: Landing.jobs EU tech
+    enabled: true
+    config:
+      profile: landing_jobs
+      path: fixtures/landing_jobs.json
   - id: mail-alerts
     kind: imap_alerts
     name: Job alert mailbox

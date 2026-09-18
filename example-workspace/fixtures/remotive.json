@@ -1,0 +1,37 @@
+{
+  "jobs": [
+    {
+      "id": 90001,
+      "url": "https://remotive.com/remote-jobs/software-dev/staff-sre-90001",
+      "title": "Staff SRE",
+      "company_name": "Acme Radar",
+      "category": "Software Development",
+      "job_type": "freelance",
+      "candidate_required_location": "Europe",
+      "salary": "$90 - $150 /hour",
+      "publication_date": "2026-09-01T00:00:00"
+    },
+    {
+      "id": 90002,
+      "url": "https://remotive.com/remote-jobs/writing/office-coordinator-90002",
+      "title": "Office Coordinator",
+      "company_name": "No Hire Inc",
+      "category": "Writing",
+      "job_type": "full_time",
+      "candidate_required_location": "USA",
+      "salary": "",
+      "publication_date": "2026-09-01T00:00:00"
+    },
+    {
+      "id": 90003,
+      "url": "https://remotive.com/remote-jobs/writing/copywriter-90003",
+      "title": "Freelance Copywriter",
+      "company_name": "Word Mill",
+      "category": "Writing",
+      "job_type": "freelance",
+      "candidate_required_location": "Worldwide",
+      "salary": "$50-$75 /hour",
+      "publication_date": "2026-09-01T00:00:00"
+    }
+  ]
+}

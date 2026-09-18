@@ -212,6 +212,79 @@ def test_http_json_is_get_only():
         poll_http_json({"url": "https://example.test/apply", "method": "POST"})
 
 
+def test_remotive_profile_keeps_europe_drops_usa():
+    listings = poll_http_json(
+        {
+            "profile": "remotive",
+            "path": str(EXAMPLE / "fixtures" / "remotive.json"),
+        }
+    )
+    assert [row.company for row in listings] == ["Acme Radar"]
+    row = listings[0]
+    assert row.title == "Staff SRE"
+    assert row.url == "https://remotive.com/remote-jobs/software-dev/staff-sre-90001"
+    assert row.payload["engagement"] == "b2b"
+    assert row.payload["modality"] == "remote"
+    assert row.payload["location_city"] == "Europe"
+    assert row.payload["comp_quoted"] == {
+        "amount": 90.0,
+        "currency": "USD",
+        "unit": "hour",
+    }
+
+
+def test_landing_jobs_profile_maps_contract_and_fte():
+    listings = poll_http_json(
+        {
+            "profile": "landing_jobs",
+            "path": str(EXAMPLE / "fixtures" / "landing_jobs.json"),
+        }
+    )
+    by_company = {row.company: row for row in listings}
+    assert set(by_company) == {"Acme Radar", "No Hire Inc"}
+    acme = by_company["Acme Radar"]
+    assert acme.payload["engagement"] == "b2b"
+    assert acme.payload["modality"] == "remote"
+    assert acme.payload["location_country"] == "PL"
+    assert acme.payload["comp_quoted"]["amount"] == 96000.0
+    assert acme.payload["comp_quoted"]["currency"] == "EUR"
+    assert acme.payload["comp_quoted"]["unit"] == "year"
+    fte = by_company["No Hire Inc"]
+    assert fte.payload["engagement"] == "fte"
+    assert fte.payload["location_country"] == "PT"
+
+
+def test_http_json_max_items_and_justjoin_b2b_filter():
+    limited = poll_http_json(
+        {
+            "profile": "landing_jobs",
+            "path": str(EXAMPLE / "fixtures" / "landing_jobs.json"),
+            "max_items": 1,
+        }
+    )
+    assert len(limited) == 1
+    b2b_only = poll_http_json(
+        {
+            "profile": "justjoin",
+            "path": str(EXAMPLE / "fixtures" / "justjoin.json"),
+            "employment": "b2b",
+        }
+    )
+    assert [row.company for row in b2b_only] == ["Acme Radar"]
+
+
+def test_new_example_sources_poll_offline(workspace):
+    _data, env = workspace
+    _, remotive = _json(["sources", "run", "remotive-eu", "--run"], env)
+    assert remotive["job"]["state"] == "done"
+    assert remotive["result"]["listings"] == 1
+    assert remotive["result"]["new"] == 1
+    _, landing = _json(["sources", "run", "landing-jobs-eu", "--run"], env)
+    assert landing["job"]["state"] == "done"
+    assert landing["result"]["listings"] == 2
+    assert landing["result"]["new"] == 2
+
+
 def test_imap_alerts_peek_readonly():
     fake = FakeIMAP(
         {

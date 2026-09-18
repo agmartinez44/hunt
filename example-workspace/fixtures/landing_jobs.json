@@ -1,0 +1,24 @@
+[
+  {
+    "id": 19001,
+    "title": "Staff SRE",
+    "url": "https://landing.jobs/at/acme-radar/staff-sre-in-warsaw",
+    "type": "Contract",
+    "remote": true,
+    "currency_code": "EUR",
+    "gross_salary_low": 96000,
+    "gross_salary_high": 120000,
+    "locations": [{"city": "Warsaw", "country_code": "PL"}]
+  },
+  {
+    "id": 19002,
+    "title": "Office Coordinator",
+    "url": "https://landing.jobs/at/no-hire-inc/office-coordinator-in-lisbon",
+    "type": "Full-time",
+    "remote": false,
+    "currency_code": "EUR",
+    "gross_salary_low": 30000,
+    "gross_salary_high": 36000,
+    "locations": [{"city": "Lisbon", "country_code": "PT"}]
+  }
+]

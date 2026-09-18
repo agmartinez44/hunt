@@ -52,7 +52,8 @@ Hunt does not ship a Hermes client. There is no apply/send job type.
 ## Safety
 
 Adapters (`imap_alerts`, `http_json`) never POST an application and never
-send mail. `imap_alerts` selects the folder `readonly=True` and uses
+send mail. `http_json` named profiles: `justjoin` (Poland IT), `remotive`
+(EU/Europe remote IT), `landing_jobs` (EU tech). GET only. `imap_alerts` selects the folder `readonly=True` and uses
 `BODY.PEEK[]` (headers + body; never STORE/EXPUNGE). LinkedIn alerts are
 parsed into employer, role, location, URL, engagement, and quoted pay
 when present. It searches FROM (when configured), then applies header

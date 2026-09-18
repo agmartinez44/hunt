@@ -187,9 +187,13 @@ def test_sources_and_jobs_http_and_cli(client):
     sources = http.get("/api/sources")
     ids = {s["id"] for s in sources.json()["sources"]}
     assert "justjoin-sample" in ids
+    assert "remotive-eu" in ids
+    assert "landing-jobs-eu" in ids
     assert "mail-alerts" in ids
     by_id = {s["id"]: s for s in sources.json()["sources"]}
     assert by_id["justjoin-sample"]["kind"] == "http_json"
+    assert by_id["remotive-eu"]["kind"] == "http_json"
+    assert by_id["landing-jobs-eu"]["kind"] == "http_json"
     assert by_id["mail-alerts"]["kind"] == "imap_alerts"
     assert by_id["mail-alerts"]["enabled"] is False
 

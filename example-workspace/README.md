@@ -11,7 +11,7 @@ the Hunt repo.
 ```
 example-workspace/
   config.yaml          # bind, FX stamp, tax_homes, floor, sample sources, agent.model (no secrets)
-  fixtures/            # fictional http_json payload for offline source-poll
+  fixtures/            # fictional http_json payloads (JustJoin, Remotive, Landing.jobs)
   knowledge/           # honesty-gated YAML + integrity *values*
   store.sqlite         # created at runtime by hunt.core (gitignored)
   attachments/         # PDFs and application files (gitignored)
