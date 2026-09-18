@@ -249,6 +249,38 @@ def test_ui_has_no_apply_controls():
     assert 'data-primitive="AppTabBar"' in js
 
 
+def test_ui_visual_followup_mira_agu7():
+    """Mira AGU-7 changes-requested: mobile cards, density, sticky-save, jobs filters."""
+    js = (ROOT / "hunt" / "http" / "static" / "app.js").read_text()
+    css = (ROOT / "hunt" / "http" / "static" / "hunt.css").read_text()
+    assert "sources-cards" in js
+    assert "jobs-cards" in js
+    assert "source-card" in js
+    assert "job-card" in js
+    assert ".sources-cards" in css
+    assert ".jobs-cards" in css
+    assert '[data-primitive="DataTable"] td [data-primitive="PayQuoted"] > .caption' in css
+    assert "display: none" in css.split('[data-primitive="DataTable"] td [data-primitive="PayQuoted"] > .caption')[1][:400]
+    assert '<span data-primitive="PayUnknown">Pay unknown</span>' in js
+    assert '<span class="caption">Pay</span>Pay unknown' not in js
+    assert ".sticky-save.is-dirty" in css
+    assert "position: fixed" in css.split(".sticky-save.is-dirty")[1][:500]
+    assert "quotedDirty" in js
+    assert ".enqueue-form" in css
+    assert "flex-direction: column" in css
+    assert "[data-primitive=\"PageHeader\"]:has(.enqueue-form) .header-actions" in css
+    assert "detail-header-actions" in css
+    assert 'data-primitive="StatusSelect"' in js
+    assert "file-btn" in css
+    assert "Choose file" in js
+    assert 'data-job-state=' in js
+    assert 'data-job-type=' in js
+    assert "overflow-wrap: anywhere" in css
+    assert "font-size: var(--text-xs)" in css.split('[data-primitive="CountBadge"]')[1][:400]
+    assert "skel-chrome" in js
+    assert "BOARD_COLS" in js
+
+
 def test_spa_and_meta(client):
     http, _, _ = client
     page = http.get("/")

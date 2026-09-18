@@ -158,7 +158,7 @@ button, input, select, textarea {
   border-radius: 8px;
   background: var(--accent);
   color: var(--accent-fg);
-  font-size: 10px;
+  font-size: var(--text-xs);
   line-height: 16px;
   justify-content: center;
 }
@@ -339,17 +339,23 @@ main.page {
 [data-primitive="DataTable"] tbody tr:hover {
   background: color-mix(in srgb, var(--surface-2) 50%, var(--surface));
 }
-[data-primitive="DataTable"] .caption {
+[data-primitive="DataTable"] td [data-primitive="PayQuoted"] > .caption,
+[data-primitive="DataTable"] td [data-primitive="PayDerived"] > .caption,
+[data-primitive="DataTable"] td [data-primitive="PayUnknown"] > .caption {
   display: none;
 }
 
 .board-cards,
-.inbox-cards {
+.inbox-cards,
+.sources-cards,
+.jobs-cards {
   display: none;
 }
 
 .board-card,
-.inbox-card {
+.inbox-card,
+.source-card,
+.job-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -407,8 +413,7 @@ main.page {
   font-size: var(--text-md);
 }
 [data-primitive="PayQuoted"] .caption,
-[data-primitive="PayDerived"] .caption,
-[data-primitive="PayUnknown"] .caption {
+[data-primitive="PayDerived"] .caption {
   display: block;
   font-size: var(--text-xs);
   line-height: 14px;
@@ -565,6 +570,11 @@ main.page {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.dialog-body dd {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -601,6 +611,7 @@ main.page {
 [data-primitive="FormField"].span-2 { grid-column: span 2; }
 [data-primitive="TextInput"],
 [data-primitive="Select"],
+[data-primitive="StatusSelect"],
 [data-primitive="Textarea"] {
   height: 32px;
   border: 1px solid var(--border);
@@ -652,6 +663,24 @@ main.page {
   color: var(--text-faint);
   font-weight: 600;
 }
+.detail-header {
+  align-items: flex-start;
+}
+.detail-header-titles {
+  flex: 1;
+  min-width: 0;
+}
+.detail-header-titles h1 {
+  flex: none;
+  font-size: var(--text-xl);
+  line-height: 26px;
+}
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
 .company-title {
   font-size: var(--text-xl);
   line-height: 26px;
@@ -660,7 +689,7 @@ main.page {
 }
 .role-title {
   color: var(--text-muted);
-  margin: 0 0 var(--space-2);
+  margin: 0;
 }
 
 .knockout {
@@ -702,9 +731,39 @@ main.page {
   align-items: center;
   font-size: var(--text-sm);
 }
+.artifact-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: flex-end;
+  margin-top: var(--space-3);
+}
+.artifact-form [data-primitive="FormField"] {
+  margin: 0;
+}
+.file-btn {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+.file-btn input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
 .sha {
   font-family: var(--mono);
   color: var(--text-faint);
+}
+
+.enqueue-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .sticky-save {
@@ -740,27 +799,56 @@ main.page {
   main.page {
     padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--space-4));
   }
-  .board-table, .inbox-table, .jobs-table, .sources-table { display: none; }
-  .board-cards, .inbox-cards { display: block; }
+  .board-table, .inbox-table, .jobs-table, .sources-table, .skel-chrome { display: none; }
+  .board-cards, .inbox-cards, .sources-cards, .jobs-cards { display: block; }
   .form-grid { grid-template-columns: 1fr; }
   [data-primitive="FormField"].span-2 { grid-column: auto; }
   .detail {
     grid-template-columns: 1fr;
   }
   .detail-left { position: static; }
+  .detail-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
   [data-primitive="FilterBar"] {
     flex-wrap: nowrap;
     overflow-x: auto;
   }
   [data-primitive="FilterChip"] { flex: 0 0 auto; }
-  .sticky-save {
+  [data-primitive="PageHeader"]:has(.enqueue-form) .header-actions {
+    flex: 1 0 100%;
+    width: 100%;
+    order: 5;
+  }
+  .enqueue-form {
+    flex: 1 0 100%;
+    width: 100%;
+    max-width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .enqueue-form [data-primitive="Select"],
+  .enqueue-form [data-primitive="TextInput"],
+  .enqueue-form [data-primitive="Btn"].primary {
+    width: 100%;
+    height: 44px;
+    min-height: 44px;
+  }
+  .sticky-save.is-dirty {
     display: flex;
-    position: sticky;
+    position: fixed;
+    left: 0;
+    right: 0;
     bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+    z-index: 15;
     background: var(--surface);
     border-top: 1px solid var(--border);
     padding: var(--space-2) var(--space-4);
-    margin: 0 calc(-1 * var(--space-4));
+  }
+  [data-primitive="AppShell"].quoted-dirty main.page {
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 52px + var(--space-4));
   }
   [data-primitive="Toast"] {
     bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--space-3));

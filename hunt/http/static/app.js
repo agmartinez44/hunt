@@ -20,7 +20,12 @@
     "offer",
   ];
   const JOB_TYPES = ["source-poll", "screen-inbox", "tailor-cv"];
+  const JOB_STATES = ["queued", "running", "done", "failed"];
   const TOKEN_KEY = "hunt_token";
+  const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Floor", "Updated", "Id"];
+  const INBOX_COLS = ["Company", "Title", "Source", "Pay", "Why keep", "Why risk", "Knockouts", "Age", "Actions", "Id"];
+  const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
+  const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
 
   const state = {
     meta: null,
@@ -32,8 +37,8 @@
     boardFilters: new Set(OPEN_STATUSES),
     boardQuery: "",
     inboxStatus: "pending",
-    jobState: "",
-    jobType: "",
+    jobStateFilters: new Set(JOB_STATES),
+    jobTypeFilters: new Set(JOB_TYPES),
     quotedDirty: false,
   };
 
@@ -101,6 +106,7 @@
     if (replace) history.replaceState({}, "", href);
     else history.pushState({}, "", href);
     state.dialog = null;
+    state.quotedDirty = false;
     render();
   }
 
@@ -192,7 +198,7 @@
 
   function PayQuoted(q) {
     if (!q || q.amount == null) {
-      return `<span data-primitive="PayUnknown"><span class="caption">Pay</span>Pay unknown</span>`;
+      return `<span data-primitive="PayUnknown">Pay unknown</span>`;
     }
     return `<span data-primitive="PayQuoted"><span class="caption">Quoted</span><strong>${esc(money(q.amount))} ${esc(q.currency)} / ${esc(q.unit)}</strong></span>`;
   }
@@ -224,9 +230,12 @@
     return `<div data-primitive="ErrorBanner"><span class="msg">${esc(message)}</span>${Btn("Retry", { attrs: retryAttr })}</div>`;
   }
 
-  function LoadingSkeleton(n = 8) {
+  function LoadingSkeleton(n = 8, columns) {
     const rows = Array.from({ length: n }, () => `<div data-primitive="LoadingSkeleton"></div>`).join("");
-    return `<div class="skel-table">${rows}</div>`;
+    const bars = `<div class="skel-table">${rows}</div>`;
+    if (!columns || !columns.length) return bars;
+    const th = columns.map((c) => `<th>${esc(c)}</th>`).join("");
+    return `<table data-primitive="DataTable" class="skel-chrome"><thead><tr>${th}</tr></thead></table>${bars}`;
   }
 
   function FormField(label, control, { help, span2, name } = {}) {
@@ -320,7 +329,8 @@
 
   function shell(current, badges, body) {
     const n = nav(current, badges);
-    return `<div data-primitive="AppShell">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
+    const dirty = state.quotedDirty && current === "board" && state.route.name === "detail" ? " quoted-dirty" : "";
+    return `<div data-primitive="AppShell" class="${dirty.trim()}">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
   }
 
   function dialogHtml() {
@@ -384,6 +394,18 @@
     </div>`;
   }
 
+  function jobFiltersHtml() {
+    const states = JOB_STATES.map((s) => {
+      const on = state.jobStateFilters.has(s);
+      return `<button type="button" data-primitive="FilterChip" data-job-state="${s}" aria-pressed="${on}">${s}</button>`;
+    }).join("");
+    const types = JOB_TYPES.map((t) => {
+      const on = state.jobTypeFilters.has(t);
+      return `<button type="button" data-primitive="FilterChip" data-job-type="${t}" aria-pressed="${on}">${t}</button>`;
+    }).join("");
+    return `<div data-primitive="FilterBar">${states}${types}</div>`;
+  }
+
   function appRowCells(app) {
     const q = quotedOf(app);
     const d = app.comp_derived;
@@ -409,7 +431,7 @@
       badges,
       pageHeader("Board", `<span class="page-count"></span>`, Btn("New application", { variant: "primary", href: "/applications/new" }) + CommandHint("hunt applications create --company … --json")) +
         boardFiltersHtml() +
-        LoadingSkeleton()
+        LoadingSkeleton(8, BOARD_COLS)
     );
     let data;
     try {
@@ -535,14 +557,16 @@
     const activeTailor = jobs.some((j) => j.type === "tailor-cv" && (j.state === "queued" || j.state === "running"));
     const statusOpts = STATUSES.map((s) => `<option value="${s}" ${s === app.status ? "selected" : ""}>${s}</option>`).join("");
     const header =
-      `<div data-primitive="PageHeader">
-        <div>
+      `<div data-primitive="PageHeader" class="detail-header">
+        <div class="detail-header-titles">
           <h1 class="company-title">${esc(app.company)}</h1>
           <p class="role-title">${esc(titleOf(app))}</p>
         </div>
-        <select data-primitive="Select" id="status-select">${statusOpts}</select>
-        ${CopyId(app.id)}
-        ${CommandHint(`hunt applications update ${app.id} --status ${app.status} --json`)}
+        <div class="detail-header-actions">
+          <select data-primitive="StatusSelect" id="status-select">${statusOpts}</select>
+          ${CopyId(app.id)}
+          ${CommandHint(`hunt applications update ${app.id} --status ${app.status} --json`)}
+        </div>
       </div>`;
     const paySummary = `<div class="section pay-summary">
       ${PayQuoted(quotedOf(app))}
@@ -611,9 +635,9 @@
     const right = `
       <section class="section"><h2>Artifacts</h2>
         <div data-primitive="ArtifactList">${artHtml}</div>
-        <form id="artifact-form" style="margin-top:12px">
-          <input type="file" name="file" required>
-          ${select("kind", "jd", ["jd", "cv", "notes", "other"])}
+        <form id="artifact-form" class="artifact-form">
+          ${FormField("File", `<label data-primitive="Btn" class="file-btn">Choose file<input type="file" name="file" required></label>`)}
+          ${FormField("Kind", select("kind", "jd", ["jd", "cv", "notes", "other"]))}
           ${Btn("Add file", { type: "submit" })}
         </form>
       </section>
@@ -628,7 +652,7 @@
       <div class="detail-left">${paySummary}${quotedForm}<div class="section"><h2>Knockouts</h2>${knocks}${urlLine}</div></div>
       <div class="detail-right">${right}</div>
     </div>
-    <div class="sticky-save">${Btn("Save quoted", { variant: "primary", attrs: "data-submit-quoted" })}</div>`;
+    <div class="sticky-save${state.quotedDirty ? " is-dirty" : ""}">${Btn("Save quoted", { variant: "primary", attrs: "data-submit-quoted" })}</div>`;
     root.innerHTML = shell("board", badges, body);
   }
 
@@ -636,7 +660,7 @@
     root.innerHTML = shell(
       "inbox",
       badges,
-      pageHeader("Inbox", "", "") + LoadingSkeleton()
+      pageHeader("Inbox", "", "") + LoadingSkeleton(8, INBOX_COLS)
     );
     let data;
     try {
@@ -711,7 +735,7 @@
   }
 
   async function renderSources(root, badges) {
-    root.innerHTML = shell("sources", badges, pageHeader("Sources", "", "") + LoadingSkeleton(4));
+    root.innerHTML = shell("sources", badges, pageHeader("Sources", "", "") + LoadingSkeleton(4, SOURCE_COLS));
     let data;
     try {
       data = await api("/api/sources");
@@ -748,6 +772,19 @@
         </tr>`
       )
       .join("");
+    const cards = sources
+      .map(
+        (s) => `<article data-primitive="Row" class="source-card">
+          <div class="row-line1"><strong>${esc(s.name)}</strong><span class="muted">${s.enabled ? "enabled" : "disabled"}</span></div>
+          <div>${esc(s.kind)}</div>
+          <div class="faint" title="${esc(s.last_run_at || "")}">${esc(s.last_run_at ? relative(s.last_run_at) : "never run")}</div>
+          ${s.last_error ? `<div class="danger-text">${esc(s.last_error)}</div>` : ""}
+          <div class="row-actions">
+            ${Btn("Run now", { attrs: `data-run-source="${esc(s.id)}" ${s.enabled ? "" : "disabled"}` })}
+          </div>
+        </article>`
+      )
+      .join("");
     root.innerHTML = shell(
       "sources",
       badges,
@@ -755,39 +792,51 @@
         `<table data-primitive="DataTable" class="sources-table">
           <thead><tr><th>Name</th><th>Adapter</th><th>Enabled</th><th>Last run</th><th>Last error</th><th>Listings</th><th>Inbox</th><th></th><th>Id</th></tr></thead>
           <tbody>${rows}</tbody>
-        </table>`
+        </table>
+        <div class="sources-cards">${cards}</div>`
     );
   }
 
   async function renderJobs(root, badges) {
-    root.innerHTML = shell("jobs", badges, pageHeader("Jobs", "", "") + LoadingSkeleton());
-    const qs = new URLSearchParams();
-    if (state.jobState) qs.set("state", state.jobState);
-    if (state.jobType) qs.set("type", state.jobType);
+    root.innerHTML = shell("jobs", badges, pageHeader("Jobs", "", "") + jobFiltersHtml() + LoadingSkeleton(8, JOB_COLS));
     let data;
     try {
-      data = await api(`/api/jobs${qs.toString() ? "?" + qs : ""}`);
+      data = await api("/api/jobs");
     } catch (err) {
       root.innerHTML = shell("jobs", badges, ErrorBanner(err.message));
       return;
     }
-    const jobs = data.jobs || [];
-    const enqueue = `<form id="enqueue-form" class="header-actions">
+    const all = data.jobs || [];
+    const jobs = all.filter(
+      (j) => state.jobStateFilters.has(j.state) && state.jobTypeFilters.has(j.type)
+    );
+    const enqueue = `<form id="enqueue-form" class="enqueue-form">
       ${select("type", "screen-inbox", JOB_TYPES)}
       <input data-primitive="TextInput" name="target_id" placeholder="target id">
       ${Btn("Enqueue", { variant: "primary", type: "submit" })}
       ${CommandHint("hunt jobs enqueue --type screen-inbox --json")}
     </form>`;
-    if (!jobs.length) {
+    if (!all.length) {
       root.innerHTML = shell(
         "jobs",
         badges,
         pageHeader("Jobs", `<span class="page-count">0</span>`, enqueue) +
+          jobFiltersHtml() +
           EmptyState(
             "No jobs",
             "Run a source, screen the inbox, or enqueue tailor-cv from an application.",
             Btn("Open sources", { href: "/sources" })
           )
+      );
+      return;
+    }
+    if (!jobs.length) {
+      root.innerHTML = shell(
+        "jobs",
+        badges,
+        pageHeader("Jobs", `<span class="page-count">0 / ${all.length}</span>`, enqueue) +
+          jobFiltersHtml() +
+          EmptyState("No jobs in this view", "Adjust state or type filters, or enqueue a job.", "")
       );
       return;
     }
@@ -805,14 +854,26 @@
         </tr>`
       )
       .join("");
+    const cards = jobs
+      .map(
+        (j) => `<article data-primitive="Row" class="job-card">
+          <div class="row-line1"><strong>${esc(j.type)}</strong>${JobStatePill(j.state)}</div>
+          <div class="muted">${esc(j.target_id || "—")}</div>
+          <div>${CopyId(j.id)}</div>
+          ${j.error ? `<div class="danger-text">${esc(j.error)}</div>` : ""}
+        </article>`
+      )
+      .join("");
     root.innerHTML = shell(
       "jobs",
       badges,
       pageHeader("Jobs", `<span class="page-count">${jobs.length}</span>`, enqueue) +
+        jobFiltersHtml() +
         `<table data-primitive="DataTable" class="jobs-table">
           <thead><tr><th>Id</th><th>Type</th><th>Target</th><th>State</th><th>Created</th><th>Started</th><th>Finished</th><th>Error</th></tr></thead>
           <tbody>${rows}</tbody>
-        </table>`
+        </table>
+        <div class="jobs-cards">${cards}</div>`
     );
   }
 
@@ -833,7 +894,11 @@
 
   async function render() {
     const root = document.getElementById("app");
+    const prev = state.route;
     state.route = parseRoute();
+    if (prev.name !== state.route.name || prev.id !== state.route.id) {
+      state.quotedDirty = false;
+    }
     try {
       state.meta = await api("/api/meta");
     } catch (err) {
@@ -953,6 +1018,22 @@
     if (ev.target.closest("[data-clear-filters]")) {
       state.boardFilters = new Set(OPEN_STATUSES);
       state.boardQuery = "";
+      render();
+      return;
+    }
+    const jobStateChip = ev.target.closest("[data-job-state]");
+    if (jobStateChip) {
+      const s = jobStateChip.getAttribute("data-job-state");
+      if (state.jobStateFilters.has(s)) state.jobStateFilters.delete(s);
+      else state.jobStateFilters.add(s);
+      render();
+      return;
+    }
+    const jobTypeChip = ev.target.closest("[data-job-type]");
+    if (jobTypeChip) {
+      const t = jobTypeChip.getAttribute("data-job-type");
+      if (state.jobTypeFilters.has(t)) state.jobTypeFilters.delete(t);
+      else state.jobTypeFilters.add(t);
       render();
       return;
     }
@@ -1136,6 +1217,21 @@
   });
 
   document.addEventListener("change", (ev) => {
+    if (ev.target.matches(".file-btn input[type=file]")) {
+      const label = ev.target.closest(".file-btn");
+      const input = ev.target;
+      const name = input.files && input.files[0] ? input.files[0].name : "Choose file";
+      label.textContent = name;
+      label.appendChild(input);
+      return;
+    }
+    if (ev.target.closest("#quoted-form")) {
+      state.quotedDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("quoted-dirty");
+    }
     if (ev.target.id === "status-select") {
       const value = ev.target.value;
       const id = state.route.id;
@@ -1164,7 +1260,13 @@
     if (ev.target.id === "filter-search") {
       state.boardQuery = ev.target.value;
     }
-    if (ev.target.closest("#quoted-form")) state.quotedDirty = true;
+    if (ev.target.closest("#quoted-form")) {
+      state.quotedDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("quoted-dirty");
+    }
   });
 
   document.addEventListener("keydown", (ev) => {
