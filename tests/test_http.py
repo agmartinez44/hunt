@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from hunt.core.inbox import add_item
+from hunt.core.inbox import add_item, dismiss
 from hunt.core.workspace import Workspace
 from hunt.http.app import create_app
 
@@ -531,6 +531,98 @@ def test_connect_agent_settings_ui_contract():
     assert "[data-primitive=\"AgentStatus\"][data-state=\"connecting\"]" in css
     assert "AppBar\"] > [data-primitive=\"NavItem\"]" in css
     assert "PageHeader\"].agent-header [data-primitive=\"Btn\"].primary" in css
+
+
+def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
+    """AGU-39: FTE/Freelance label, posting link, dismissed tab, Profile/Agent routes."""
+    http, data, env = client
+    with Workspace.open(data) as ws:
+        pending = add_item(
+            ws,
+            company="Acme Radar",
+            title="Staff SRE",
+            url="https://www.linkedin.com/jobs/view/4290000001",
+            why_keep="Remote EU",
+            why_risk="pay_unknown",
+            payload={"engagement": "fte", "source": "imap_alerts"},
+        )
+        gone = add_item(
+            ws,
+            company="No Hire Inc",
+            title="Office Coordinator",
+            url="https://www.linkedin.com/jobs/view/4290000002",
+            payload={"engagement": "b2b", "source": "imap_alerts"},
+        )
+        dismiss(ws, gone.id)
+
+    pending_rows = http.get("/api/inbox?status=pending").json()["inbox"]
+    assert len(pending_rows) == 1
+    row = pending_rows[0]
+    assert row["id"] == pending.id
+    assert row["engagement"] == "fte"
+    assert row["engagement_label"] == "FTE"
+    assert row["url"] == "https://www.linkedin.com/jobs/view/4290000001"
+
+    dismissed_rows = http.get("/api/inbox?status=dismissed").json()["inbox"]
+    assert len(dismissed_rows) == 1
+    assert dismissed_rows[0]["id"] == gone.id
+    assert dismissed_rows[0]["engagement_label"] == "Freelance"
+    assert http.post(f"/api/inbox/{gone.id}/promote", json={}).status_code == 400
+
+    js = (ROOT / "hunt" / "http" / "static" / "app.js").read_text()
+    css = (ROOT / "hunt" / "http" / "static" / "hunt.css").read_text()
+    assert 'data-primitive="InboxTabs"' in js
+    assert '"/inbox?status=dismissed"' in js
+    assert 'data-primitive="PostingLink"' in js
+    assert 'target="_blank" rel="noopener"' in js
+    assert "function engagementLabel" in js
+    assert 'data-nav="/profile"' in js
+    assert 'NavItem("/settings", "Agent"' in js
+    assert 'data-nav="${esc(href)}"' in js
+    assert "function parseRoute(loc)" in js
+    assert 'status === "dismissed"' in js
+    assert '["/profile", "Profile", "profile"]' not in js
+    assert "[data-primitive=\"InboxTabs\"]" in css
+    assert "[data-primitive=\"PostingLink\"]" in css
+
+    parsed = _eval_parse_route(js, "/profile")
+    assert parsed["name"] == "profile"
+    parsed = _eval_parse_route(js, "/settings")
+    assert parsed["name"] == "settings"
+    parsed = _eval_parse_route(js, "/inbox", "?status=dismissed")
+    assert parsed == {"name": "inbox", "id": None, "tab": None, "status": "dismissed"}
+    parsed = _eval_parse_route(js, "/inbox")
+    assert parsed["status"] == "pending"
+    parsed = _eval_parse_route(js, "/nope")
+    assert parsed["name"] == "notfound"
+
+
+def _eval_parse_route(js: str, pathname: str, search: str = ""):
+    start = js.index("function parseRoute")
+    end = js.index("function relative")
+    harness = (
+        "const PROFILE_TABS = "
+        '[["profile","Profile"],["positions","Positions"],'
+        '["achievements","Achievements"],["skills","Skills"],'
+        '["projects","Projects"],["integrity","Integrity"]];\n'
+        + js[start:end]
+        + "const r = parseRoute({ pathname: "
+        + json.dumps(pathname)
+        + ", search: "
+        + json.dumps(search)
+        + " });\n"
+        "process.stdout.write(JSON.stringify(r));\n"
+    )
+    r = subprocess.run(
+        ["node", "-e", harness],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        raise AssertionError(f"parseRoute node failed: {r.stderr}\n{r.stdout}")
+    return json.loads(r.stdout)
 
 
 def test_agent_http_secret_never_returned_and_local_round_trip(client):

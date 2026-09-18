@@ -277,7 +277,7 @@ def cmd_inbox_list(args: argparse.Namespace) -> None:
                 "company": i.get("company"),
                 "role": i.get("role") or i.get("title"),
                 "location": i.get("location") or "",
-                "engagement": i.get("engagement") or "",
+                "engagement": i.get("engagement_label") or i.get("engagement") or "",
                 "net_month": _derived_net(i),
                 "why_keep": i.get("why_keep") or "",
                 "why_risk": i.get("why_risk") or "",

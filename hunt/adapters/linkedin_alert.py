@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 
-from hunt.core.pay import normalize_country
+from hunt.core.pay import normalize_country, normalize_engagement
 
 JOB_VIEW_RE = re.compile(
     r"https?://(?:www\.)?linkedin\.com/(?:comm/)?jobs/view/(\d+)",
@@ -50,8 +50,31 @@ MODALITY_RE = re.compile(
 )
 MODALITY_WORD_RE = re.compile(r"\b(remote|hybrid|on-?site|onsite)\b", re.I)
 ENGAGEMENT_RE = re.compile(
-    r"\b(full[\s-]?time|part[\s-]?time|permanent|contract(?:or)?|freelance|b2b)\b",
+    r"\b("
+    r"full[\s\-_]?time|"
+    r"part[\s\-_]?time|"
+    r"permanent|"
+    r"contract(?:or|ing)?|"
+    r"freelance(?:r)?|"
+    r"b2b|"
+    r"uop|"
+    r"self[\s\-_]?employed|"
+    r"aut[oó]nomo"
+    r")\b",
     re.I,
+)
+_DASH_TRANS = str.maketrans(
+    {
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
+        "\xa0": " ",
+        "\u202f": " ",
+    }
 )
 PAY_RE = re.compile(
     r"""
@@ -104,13 +127,58 @@ _ENGAGEMENT = {
     "full time": "fte",
     "fulltime": "fte",
     "permanent": "fte",
-    "part-time": "unknown",
-    "part time": "unknown",
+    "uop": "fte",
+    "part-time": None,
+    "part time": None,
+    "parttime": None,
     "contract": "b2b",
     "contractor": "b2b",
+    "contracting": "b2b",
     "freelance": "b2b",
+    "freelancer": "b2b",
     "b2b": "b2b",
+    "self-employed": "b2b",
+    "self employed": "b2b",
+    "autonomo": "b2b",
+    "autónomo": "b2b",
 }
+
+
+def _normalize_alert_text(text: str) -> str:
+    return str(text).translate(_DASH_TRANS)
+
+
+def _map_engagement(token: str) -> str | None:
+    """Map a stated employment-type token to listing storage (fte|b2b).
+
+    Applications keep b2b/uop aliases; pay treats b2b as freelance. Never
+    guess: unmatched or part-time stays missing.
+    """
+    key = re.sub(r"[\s\-_]+", "-", token.lower()).strip("-")
+    if key in _ENGAGEMENT:
+        return _ENGAGEMENT[key]
+    spaced = key.replace("-", " ")
+    if spaced in _ENGAGEMENT:
+        return _ENGAGEMENT[spaced]
+    kind = normalize_engagement(token)
+    if kind == "fte":
+        return "fte"
+    if kind == "freelance":
+        return "b2b"
+    return None
+
+
+def extract_engagement(text: str | None) -> str | None:
+    """Return fte|b2b when the posting states it. Never invent."""
+    if not text:
+        return None
+    blob = _normalize_alert_text(text)
+    for raw in ENGAGEMENT_RE.findall(blob):
+        token = raw if isinstance(raw, str) else raw[0]
+        mapped = _map_engagement(token)
+        if mapped:
+            return mapped
+    return None
 
 
 def canonical_job_url(value: str | None) -> str | None:
@@ -391,12 +459,9 @@ def _fields_from_blob(text: str | None) -> dict[str, Any]:
     modes = MODALITY_WORD_RE.findall(text)
     if modes:
         out["modality"] = _MODALITY.get(modes[0].lower().replace(" ", "-"))
-    engagements = ENGAGEMENT_RE.findall(text)
-    if engagements:
-        key = re.sub(r"\s+", " ", engagements[0].lower()).replace(" ", "-")
-        mapped = _ENGAGEMENT.get(key) or _ENGAGEMENT.get(key.replace("-", " "))
-        if mapped:
-            out["engagement"] = mapped
+    found = extract_engagement(text)
+    if found:
+        out["engagement"] = found
     return out
 
 
@@ -469,7 +534,7 @@ def _is_boilerplate(line: str) -> bool:
 def _clean(value: str | None) -> str | None:
     if value is None:
         return None
-    text = " ".join(str(value).replace("\xa0", " ").split())
+    text = " ".join(_normalize_alert_text(str(value)).split())
     return text or None
 
 
@@ -526,12 +591,21 @@ class _JobHtml(HTMLParser):
         if self._skip:
             return
         data = {k: v or "" for k, v in attrs}
+        extras = [
+            _clean(data.get(key))
+            for key in ("aria-label", "title", "alt")
+            if data.get(key)
+        ]
+        extras = [item for item in extras if item]
         if tag == "a":
             job_id = _job_id(data.get("href"))
             if job_id and job_id not in self._seen:
                 self._seen.add(job_id)
-                self._current = (job_id, [])
+                self._current = (job_id, list(extras))
                 self.cards.append(self._current)
+                return
+        if self._current:
+            self._current[1].extend(extras)
 
     def handle_data(self, data: str) -> None:
         if self._skip or not self._current:

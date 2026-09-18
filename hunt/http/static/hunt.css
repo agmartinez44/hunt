@@ -1033,6 +1033,24 @@ main.page {
   margin: 0 0 var(--space-4);
   order: 4;
 }
+[data-primitive="InboxTabs"] {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  width: 100%;
+  margin: 0 0 var(--space-4);
+}
+[data-primitive="PostingLink"] {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+[data-primitive="PostingLink"]:hover {
+  color: var(--text);
+}
+[data-primitive="EngagementLabel"].muted {
+  color: var(--text-faint);
+}
 [data-primitive="DraftBadge"],
 [data-primitive="VerifiedBadge"] {
   display: inline-flex;

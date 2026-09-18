@@ -85,6 +85,17 @@ def upsert_listing(
         company = company or existing["company"]
         if url:
             body.setdefault("url", url)
+        old = json.loads(existing["payload_json"] or "{}")
+        if isinstance(old, dict):
+            for key in (
+                "engagement",
+                "modality",
+                "location_city",
+                "location_country",
+                "comp_quoted",
+            ):
+                if not body.get(key) and old.get(key) not in (None, ""):
+                    body[key] = old[key]
         ws.conn.execute(
             """
             UPDATE listings
@@ -115,6 +126,57 @@ def upsert_listing(
         "SELECT * FROM listings WHERE id = ?", (listing_id,)
     ).fetchone()
     return _row_to_listing(row), True
+
+
+def _listing_text_blob(listing: Listing) -> str:
+    parts: list[str] = [
+        str(listing.title or ""),
+        str(listing.company or ""),
+        str(listing.url or ""),
+    ]
+    for value in listing.payload.values():
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, dict):
+            parts.append(json.dumps(value))
+    return "\n".join(part for part in parts if part)
+
+
+def apply_stated_engagement(ws: Workspace, listing: Listing) -> Listing:
+    """Fill payload.engagement from stated posting text. Never invent."""
+    payload = dict(listing.payload)
+    if payload.get("engagement"):
+        return listing
+    from hunt.adapters.linkedin_alert import extract_engagement
+
+    found = extract_engagement(_listing_text_blob(listing))
+    if not found:
+        return listing
+    payload["engagement"] = found
+    ws.conn.execute(
+        "UPDATE listings SET payload_json = ? WHERE id = ?",
+        (json.dumps(payload), listing.id),
+    )
+    return get_listing(ws, listing.id) or listing
+
+
+def backfill_engagement(ws: Workspace, *, commit: bool = True) -> dict[str, Any]:
+    """Fill missing listing engagement when stored text states FTE/freelance."""
+    updated = 0
+    already = 0
+    missing = 0
+    for listing in list_listings(ws):
+        if (listing.payload or {}).get("engagement"):
+            already += 1
+            continue
+        refreshed = apply_stated_engagement(ws, listing)
+        if (refreshed.payload or {}).get("engagement"):
+            updated += 1
+        else:
+            missing += 1
+    if commit:
+        ws.conn.commit()
+    return {"updated": updated, "already": already, "missing": missing}
 
 
 def list_listings(ws: Workspace) -> list[Listing]:

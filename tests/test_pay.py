@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hunt.core.pay import QuotedPay, derive_pay, estimate_pay
+from hunt.core.pay import QuotedPay, derive_pay, engagement_label, estimate_pay, normalize_engagement
 
 FX = {"USD": 0.90, "EUR": 1.0, "PLN": 0.23, "CHF": 1.05}
 FLOOR = {"amount": 7000, "currency": "EUR", "unit": "month"}
@@ -155,6 +155,20 @@ def test_six_tax_home_cells(country, engagement, net, vat_out, clears):
     assert estimate["assumptions"]["rate_source"]
     assert estimate["country"] in {"CH", "ES", "PL"}
     assert estimate["engagement"] in {"fte", "freelance"}
+
+
+def test_engagement_label_fte_freelance_unknown():
+    assert engagement_label("fte") == "FTE"
+    assert engagement_label("uop") == "FTE"
+    assert engagement_label("full-time") == "FTE"
+    assert engagement_label("b2b") == "Freelance"
+    assert engagement_label("freelance") == "Freelance"
+    assert engagement_label("contract") == "Freelance"
+    assert engagement_label(None) == "Unknown"
+    assert engagement_label("") == "Unknown"
+    assert engagement_label("part-time") == "Unknown"
+    assert normalize_engagement("FULL TIME") == "fte"
+    assert normalize_engagement("B2B") == "freelance"
 
 
 def test_country_and_engagement_enough_without_tax_home():

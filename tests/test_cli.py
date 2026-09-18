@@ -176,6 +176,7 @@ def test_inbox_promote_is_explicit(workspace):
     widget = next(row for row in inbox["inbox"] if row["id"] == item_id)
     assert widget["role"] == "Reliability Engineer"
     assert widget["engagement"] == "b2b"
+    assert widget["engagement_label"] == "Freelance"
     assert widget["net_month"] is not None
     assert widget["display_currency"] == "EUR"
     assert widget["comp_derived"]["net_month"] == widget["net_month"]

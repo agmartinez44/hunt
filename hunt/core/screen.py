@@ -8,7 +8,13 @@ import json
 
 from hunt.adapters.linkedin_alert import parse_subject
 from hunt.core.inbox import add_inbox_for_listing, refresh_inbox_for_listing
-from hunt.core.listings import Listing, get_listing, list_listings
+from hunt.core.listings import (
+    Listing,
+    apply_stated_engagement,
+    backfill_engagement,
+    get_listing,
+    list_listings,
+)
 from hunt.core.workspace import Workspace
 
 _MAILBOX_COMPANIES = {"linkedin", "job alert", "imap", "mail"}
@@ -153,6 +159,7 @@ def _existing_knockouts(row: Any) -> list[str]:
 
 def screen_listing(ws: Workspace, listing: Listing) -> dict[str, Any]:
     listing = _enrich_listing_from_subject(ws, listing)
+    listing = apply_stated_engagement(ws, listing)
     knockouts = evaluate_knockouts(
         ws, title=listing.title, payload=listing.payload
     )
@@ -220,6 +227,7 @@ def screen_inbox(ws: Workspace) -> dict[str, Any]:
     dropped = 0
     screened = 0
     refreshed = 0
+    backfill_engagement(ws, commit=False)
     for listing in list_listings(ws):
         screened += 1
         result = screen_listing(ws, listing)

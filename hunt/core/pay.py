@@ -48,12 +48,17 @@ _ENGAGEMENT_ALIASES = {
     "EMPLOYMENT": "fte",
     "EMPLOYEE": "fte",
     "UOP": "fte",
+    "FULL-TIME": "fte",
+    "FULLTIME": "fte",
     "FREELANCE": "freelance",
+    "FREELANCER": "freelance",
     "B2B": "freelance",
     "JDG": "freelance",
     "AUTONOMO": "freelance",
     "AUTÓNOMO": "freelance",
+    "CONTRACT": "freelance",
     "CONTRACTOR": "freelance",
+    "CONTRACTING": "freelance",
     "SELF-EMPLOYED": "freelance",
     "SELFEMPLOYED": "freelance",
     "SOLETRADER": "freelance",
@@ -214,6 +219,16 @@ def normalize_engagement(value: str | None) -> str | None:
     if lowered in ENGAGEMENT_KINDS:
         return lowered
     return None
+
+
+def engagement_label(value: str | None) -> str:
+    """Human inbox label. Canonical kinds are FTE / Freelance; missing is Unknown."""
+    kind = normalize_engagement(value)
+    if kind == "fte":
+        return "FTE"
+    if kind == "freelance":
+        return "Freelance"
+    return "Unknown"
 
 
 def _is_rate_spec(spec: Any) -> bool:

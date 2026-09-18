@@ -11,7 +11,7 @@ from typing import Any
 from hunt.core.applications import create_application, derive_for_workspace
 from hunt.core.errors import HuntError, NotFoundError, ValidationError
 from hunt.core.ids import new_id, now_iso
-from hunt.core.pay import QuotedPay
+from hunt.core.pay import QuotedPay, engagement_label
 from hunt.core.workspace import Workspace
 
 INBOX_STATUSES = ("pending", "promoted", "dismissed")
@@ -100,6 +100,7 @@ def serialize_inbox_item(ws: Workspace, item: InboxItem) -> dict[str, Any]:
     data["location_city"] = payload.get("location_city")
     data["location_country"] = payload.get("location_country")
     data["engagement"] = payload.get("engagement")
+    data["engagement_label"] = engagement_label(payload.get("engagement"))
     data["modality"] = payload.get("modality")
     data["comp_quoted"] = quoted.to_dict() if quoted else payload.get("comp_quoted")
     data["comp_derived"] = derived_dict

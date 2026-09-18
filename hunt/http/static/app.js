@@ -158,30 +158,40 @@
   }
 
   function go(href, replace) {
-    if (replace) history.replaceState({}, "", href);
-    else history.pushState({}, "", href);
+    const url = new URL(href, location.href);
+    if (url.origin !== location.origin) {
+      window.location.href = url.href;
+      return;
+    }
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    if (replace) history.replaceState({}, "", next);
+    else history.pushState({}, "", next);
     state.dialog = null;
     state.quotedDirty = false;
     render();
   }
 
-  function parseRoute() {
-    const path = location.pathname.replace(/\/+$/, "") || "/";
-    const params = new URLSearchParams(location.search);
-    if (path === "/") return { name: "board" };
-    if (path === "/inbox") return { name: "inbox" };
-    if (path === "/sources") return { name: "sources" };
-    if (path === "/jobs") return { name: "jobs" };
-    if (path === "/applications/new") return { name: "new" };
+  function parseRoute(loc) {
+    const src = loc || location;
+    const path = String(src.pathname || "/").replace(/\/+$/, "") || "/";
+    const params = new URLSearchParams(src.search || "");
+    if (path === "/") return { name: "board", id: null, tab: null };
+    if (path === "/inbox") {
+      const status = params.get("status") === "dismissed" ? "dismissed" : "pending";
+      return { name: "inbox", id: null, tab: null, status };
+    }
+    if (path === "/sources") return { name: "sources", id: null, tab: null };
+    if (path === "/jobs") return { name: "jobs", id: null, tab: null };
+    if (path === "/applications/new") return { name: "new", id: null, tab: null };
     if (path === "/profile") {
       const allowed = PROFILE_TABS.map((t) => t[0]);
       const tab = params.get("tab") || "positions";
-      return { name: "profile", tab: allowed.includes(tab) ? tab : "positions" };
+      return { name: "profile", id: null, tab: allowed.includes(tab) ? tab : "positions" };
     }
-    if (path === "/settings") return { name: "settings" };
+    if (path === "/settings") return { name: "settings", id: null, tab: null };
     const m = path.match(/^\/applications\/([^/]+)$/);
-    if (m) return { name: "detail", id: decodeURIComponent(m[1]) };
-    return { name: "notfound" };
+    if (m) return { name: "detail", id: decodeURIComponent(m[1]), tab: null };
+    return { name: "notfound", id: null, tab: null };
   }
 
   function relative(iso) {
@@ -239,13 +249,54 @@
 
   function NavItem(href, label, current, badge) {
     const cur = current ? `aria-current="page"` : "";
-    return `<a data-primitive="NavItem" href="${href}" ${cur}>${esc(label)}${CountBadge(badge)}</a>`;
+    return `<a data-primitive="NavItem" href="${esc(href)}" data-nav="${esc(href)}" ${cur}>${esc(label)}${CountBadge(badge)}</a>`;
   }
 
   function CopyId(id) {
     if (!id) return "";
     const short = id.length > 10 ? id.slice(0, 8) + "…" : id;
     return `<button type="button" data-primitive="CopyId" data-copy="${esc(id)}" title="${esc(id)}">${esc(short)}</button>`;
+  }
+
+  function engagementLabel(value) {
+    const v = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, "-");
+    if (["fte", "uop", "permanent", "full-time", "fulltime", "employee", "employment"].includes(v)) return "FTE";
+    if (
+      ["freelance", "b2b", "jdg", "contract", "contractor", "contracting", "autonomo", "autónomo", "self-employed"].includes(
+        v
+      )
+    ) {
+      return "Freelance";
+    }
+    return "Unknown";
+  }
+
+  function engagementOf(it) {
+    if (it && it.engagement_label) return it.engagement_label;
+    return engagementLabel(it && it.engagement);
+  }
+
+  function engagementCell(it) {
+    const label = engagementOf(it);
+    const quiet = label === "Unknown" ? " muted" : "";
+    return `<span data-primitive="EngagementLabel" class="${quiet}">${esc(label)}</span>`;
+  }
+
+  function PostingLink(url, label) {
+    const text = label || "Posting";
+    if (!url) return esc(text);
+    return `<a data-primitive="PostingLink" href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+  }
+
+  function InboxTabs(current, pendingCount) {
+    return `<nav data-primitive="InboxTabs">${NavItem("/inbox", "Pending", current !== "dismissed", pendingCount)}${NavItem(
+      "/inbox?status=dismissed",
+      "Dismissed",
+      current === "dismissed"
+    )}</nav>`;
   }
 
   function CommandHint(cmd) {
@@ -425,7 +476,7 @@
       .join("");
     const ws = state.meta || {};
     const chipCurrent = current === "profile" ? `aria-current="page"` : "";
-    const chip = `<a data-primitive="WorkspaceChip" href="/profile" ${chipCurrent}>${esc(ws.workspace || "workspace")}<span class="profile"> · ${esc(ws.profile_name || "")}</span></a>`;
+    const chip = `<a data-primitive="WorkspaceChip" href="/profile" data-nav="/profile" ${chipCurrent}>${esc(ws.workspace || "workspace")}<span class="profile"> · ${esc(ws.profile_name || "")}</span></a>`;
     const agentNav = NavItem("/settings", "Agent", current === "settings");
     return {
       bar: `<header data-primitive="AppBar">
@@ -824,30 +875,46 @@
     root.innerHTML = shell("board", badges, body);
   }
 
+  function inboxRowActions(it, pending) {
+    if (!pending) return "";
+    return `<div class="inbox-actions">
+            ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
+            ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
+            ${CommandHint(`hunt inbox promote ${it.id} --json`)}
+            </div>`;
+  }
+
   async function renderInbox(root, badges) {
+    const status = state.inboxStatus === "dismissed" ? "dismissed" : "pending";
+    const pending = status === "pending";
+    const tabs = InboxTabs(status, badges.inbox || 0);
     root.innerHTML = shell(
       "inbox",
       badges,
-      pageHeader("Inbox", "", "") + LoadingSkeleton(8, INBOX_COLS)
+      pageHeader("Inbox", "", "") + tabs + LoadingSkeleton(8, INBOX_COLS)
     );
     let data;
     try {
-      data = await api(`/api/inbox?status=${encodeURIComponent(state.inboxStatus)}`);
+      data = await api(`/api/inbox?status=${encodeURIComponent(status)}`);
     } catch (err) {
       root.innerHTML = shell("inbox", badges, ErrorBanner(err.message));
       return;
     }
     const items = data.inbox || [];
-    const actions = CommandHint("hunt inbox list --json");
+    const hint = pending ? "hunt inbox list --json" : "hunt inbox list --status dismissed --json";
+    const actions = CommandHint(hint);
+    const header = pageHeader("Inbox", `<span class="page-count">${items.length}</span>`, actions) + tabs;
     if (!items.length) {
       root.innerHTML = shell(
         "inbox",
         badges,
-        pageHeader("Inbox", `<span class="page-count">0</span>`, actions) +
+        header +
           EmptyState(
-            "Inbox is clear",
-            "No screened listings. Run a source or enqueue screen-inbox.",
-            Btn("Open sources", { href: "/sources" })
+            pending ? "Inbox is clear" : "No dismissed listings",
+            pending
+              ? "No screened listings. Run a source or enqueue screen-inbox."
+              : "Dismissed listings live here. Pending stays the default tab.",
+            pending ? Btn("Open sources", { href: "/sources" }) : Btn("Pending inbox", { href: "/inbox" })
           )
       );
       return;
@@ -862,20 +929,14 @@
         const role = it.role || it.title || "";
         return `<tr data-primitive="InboxRow" data-id="${esc(it.id)}">
           <td>${esc(it.company)}</td>
-          <td>${esc(role)}</td>
+          <td>${PostingLink(it.url, role || "Posting")}</td>
           <td>${esc(locationOf(it))}</td>
-          <td>${esc(it.engagement || "")}</td>
+          <td>${engagementCell(it)}</td>
           <td>${pay}</td>
           <td>${esc(it.why_keep || "")}</td>
           <td>${esc(it.why_risk || "")}</td>
           <td title="${esc(it.created_at)}">${esc(relative(it.created_at))}</td>
-          <td>
-            <div class="inbox-actions">
-            ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
-            ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
-            ${CommandHint(`hunt inbox promote ${it.id} --json`)}
-            </div>
-          </td>
+          <td>${inboxRowActions(it, pending)}</td>
           <td>${CopyId(it.id)}</td>
         </tr>`;
       })
@@ -888,16 +949,18 @@
           ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
           : NetEstimate(d);
         const role = it.role || it.title || "";
-        const meta = [locationOf(it), it.engagement].filter(Boolean).join(" · ");
+        const meta = [locationOf(it), engagementOf(it)].filter(Boolean).join(" · ");
+        const posting = it.url ? `<div>${PostingLink(it.url, "Posting")}</div>` : "";
         return `<article data-primitive="InboxRow" class="inbox-card">
-          <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${CommandHint(`hunt inbox promote ${it.id} --json`)}</span></div>
-          <div>${esc(role)}</div>
+          <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${pending ? CommandHint(`hunt inbox promote ${it.id} --json`) : ""}</span></div>
+          <div>${PostingLink(it.url, role || "Posting")}</div>
+          ${posting}
           <div class="muted">${esc(meta)}</div>
           <div>${pay}</div>
           <div class="muted">${esc(it.why_keep || it.why_risk || "")}</div>
           <div class="row-actions">
-            ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
-            ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
+            ${pending ? Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` }) : ""}
+            ${pending ? Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` }) : ""}
           </div>
         </article>`;
       })
@@ -905,7 +968,7 @@
     root.innerHTML = shell(
       "inbox",
       badges,
-      pageHeader("Inbox", `<span class="page-count">${items.length}</span>`, actions) +
+      header +
         `<table data-primitive="DataTable" class="inbox-table">
           <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Engagement</th><th>Net /mo</th><th>Why keep</th><th>Why risk</th><th>Age</th><th>Actions</th><th>Id</th></tr></thead>
           <tbody>${rows}</tbody>
@@ -2170,6 +2233,9 @@
     const root = document.getElementById("app");
     const prev = state.route;
     state.route = parseRoute();
+    if (state.route.name === "inbox") {
+      state.inboxStatus = state.route.status === "dismissed" ? "dismissed" : "pending";
+    }
     if (prev.name !== state.route.name || prev.id !== state.route.id) {
       state.quotedDirty = false;
     }
@@ -2258,10 +2324,23 @@
   }
 
   document.addEventListener("click", async (ev) => {
-    const a = ev.target.closest("a[href]");
-    if (a && a.origin === location.origin && !a.target) {
+    const a = ev.target.closest("a[href], a[data-nav]");
+    if (a) {
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+      const target = a.getAttribute("target");
+      if (target && target !== "_self") return;
+      if (a.hasAttribute("download")) return;
+      const raw = a.getAttribute("data-nav") || a.getAttribute("href");
+      if (!raw || raw.startsWith("mailto:") || raw.startsWith("javascript:")) return;
+      let url;
+      try {
+        url = new URL(raw, location.href);
+      } catch {
+        return;
+      }
+      if (url.origin !== location.origin) return;
       ev.preventDefault();
-      go(a.getAttribute("href"));
+      go(`${url.pathname}${url.search}${url.hash}`);
       return;
     }
     const copy = ev.target.closest("[data-copy]");
