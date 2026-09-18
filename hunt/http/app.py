@@ -26,7 +26,29 @@ from hunt.core.artifacts import add_file, list_artifacts
 from hunt.core.context import current_actor
 from hunt.core.errors import HuntError, NotFoundError, ValidationError
 from hunt.core.events import list_events
-from hunt.core.inbox import dismiss, list_inbox, promote
+from hunt.core.facts import (
+    confirm_achievement,
+    confirm_position,
+    create_achievement,
+    create_position,
+    create_project,
+    get_achievement,
+    get_integrity,
+    get_position,
+    get_profile,
+    get_project,
+    get_skills,
+    list_achievements,
+    list_positions,
+    list_projects,
+    update_achievement,
+    update_integrity,
+    update_position,
+    update_profile,
+    update_project,
+    update_skills,
+)
+from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
 from hunt.core.jobs import enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.workspace import Workspace, WorkspaceError, resolve_data_dir
@@ -277,7 +299,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         status: str | None = "pending", _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            items = [i.to_dict() for i in list_inbox(ws, status=status)]
+            items = [serialize_inbox_item(ws, i) for i in list_inbox(ws, status=status)]
         return {"inbox": items}
 
     @app.post("/api/inbox/{item_id}/promote")
@@ -297,7 +319,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.post("/api/inbox/{item_id}/dismiss")
     def api_dismiss(item_id: str, _: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            item = dismiss(ws, item_id).to_dict()
+            item = serialize_inbox_item(ws, dismiss(ws, item_id))
         return {"inbox_item": item}
 
     @app.get("/api/sources")
@@ -352,6 +374,148 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         with open_ws() as ws:
             job = get_job(ws, job_id).to_dict()
         return {"job": job}
+
+    def _json_object(body: Any) -> dict[str, Any]:
+        if not isinstance(body, dict):
+            raise ValidationError("expected a JSON object")
+        return body
+
+    @app.get("/api/profile")
+    def api_get_profile(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"profile": get_profile(ws)}
+
+    @app.patch("/api/profile")
+    async def api_update_profile(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"profile": update_profile(ws, body)}
+
+    @app.get("/api/positions")
+    def api_list_positions(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"positions": list_positions(ws)}
+
+    @app.post("/api/positions")
+    async def api_create_position(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"position": create_position(ws, body)}
+
+    @app.get("/api/positions/{position_id}")
+    def api_get_position(
+        position_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"position": get_position(ws, position_id)}
+
+    @app.patch("/api/positions/{position_id}")
+    async def api_update_position(
+        position_id: str, request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"position": update_position(ws, position_id, body)}
+
+    @app.post("/api/positions/{position_id}/confirm")
+    def api_confirm_position(
+        position_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"position": confirm_position(ws, position_id)}
+
+    @app.get("/api/achievements")
+    def api_list_achievements(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"achievements": list_achievements(ws)}
+
+    @app.post("/api/achievements")
+    async def api_create_achievement(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"achievement": create_achievement(ws, body)}
+
+    @app.get("/api/achievements/{achievement_id}")
+    def api_get_achievement(
+        achievement_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"achievement": get_achievement(ws, achievement_id)}
+
+    @app.patch("/api/achievements/{achievement_id}")
+    async def api_update_achievement(
+        achievement_id: str, request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"achievement": update_achievement(ws, achievement_id, body)}
+
+    @app.post("/api/achievements/{achievement_id}/confirm")
+    def api_confirm_achievement(
+        achievement_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"achievement": confirm_achievement(ws, achievement_id)}
+
+    @app.get("/api/projects")
+    def api_list_projects(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return list_projects(ws)
+
+    @app.post("/api/projects")
+    async def api_create_project(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"project": create_project(ws, body)}
+
+    @app.get("/api/projects/{project_id}")
+    def api_get_project(
+        project_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"project": get_project(ws, project_id)}
+
+    @app.patch("/api/projects/{project_id}")
+    async def api_update_project(
+        project_id: str, request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"project": update_project(ws, project_id, body)}
+
+    @app.get("/api/skills")
+    def api_get_skills(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"skills": get_skills(ws)}
+
+    @app.patch("/api/skills")
+    async def api_update_skills(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"skills": update_skills(ws, body)}
+
+    @app.get("/api/integrity")
+    def api_get_integrity(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return {"integrity": get_integrity(ws)}
+
+    @app.patch("/api/integrity")
+    async def api_update_integrity(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        with open_ws() as ws:
+            return {"integrity": update_integrity(ws, body)}
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -47,6 +47,12 @@ Promote is the **only** listing → application path, including MCP.
 | `cv_render` | Writes `$HUNT_DATA/attachments`; then finalize + verify |
 | `sources_list/run` | Run enqueues `source-poll`; does not promote |
 | `pay_estimate` | Country + engagement → net / month EUR. Estimate, not tax advice. |
+| `profile_get/update` | Knowledge profile. Contact lives only here; agents cannot change it. |
+| `positions_list/get/create/update` | YAML SoT. Agent writes are `verified: false`. Do not weaken `scope_facts`. |
+| `achievements_list/get/create/update` | YAML SoT. Never flip `verified`. Human confirms via UI or `hunt achievements confirm`. |
+| `projects_list/get/create/update` | Personal projects; keep scope honest. |
+| `skills_get/update` | Agents cannot remove `forbidden_claims`. |
+| `integrity_get` | Read-only for agents. Do not weaken rules. |
 
 `jobs_enqueue` with `run: true` (CLI `--run`) claims and executes immediately.
 `worker.backend` `none` means you must run/drain jobs; `cli` is the in-process

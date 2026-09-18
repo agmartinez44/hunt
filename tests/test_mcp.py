@@ -57,6 +57,14 @@ def test_tools_list_covers_cli_nouns():
         "cv_render",
         "sources_list",
         "sources_run",
+        "profile_get",
+        "positions_list",
+        "positions_update",
+        "achievements_list",
+        "achievements_update",
+        "projects_list",
+        "skills_get",
+        "integrity_get",
     ):
         assert required in names
 

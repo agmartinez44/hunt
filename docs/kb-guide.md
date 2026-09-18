@@ -13,6 +13,10 @@ drafts YAML; you verify. Nothing renders until you flip
 Start from a copy of `example-workspace/` (fictional Jane Doe). Replace
 the YAML; do not commit the result to Hunt.
 
+The same files are the API SoT: `hunt positions|achievements|profile|skills|projects`
+(plus HTTP/MCP). Agent writes stay `verified: false`. Confirm from the UI or
+`hunt achievements confirm` / `hunt positions confirm`.
+
 ## 1. Positions first, with hard boundaries
 
 For each job write `scope_facts` — the things an interviewer must never

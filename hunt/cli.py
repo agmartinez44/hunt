@@ -24,7 +24,29 @@ from hunt.core.artifacts import add_file
 from hunt.core.cv import render as render_cv
 from hunt.core.errors import HuntError, ValidationError
 from hunt.core.events import list_events
-from hunt.core.inbox import dismiss, list_inbox, promote
+from hunt.core.facts import (
+    confirm_achievement,
+    confirm_position,
+    create_achievement,
+    create_position,
+    create_project,
+    get_achievement,
+    get_integrity,
+    get_position,
+    get_profile,
+    get_project,
+    get_skills,
+    list_achievements,
+    list_positions,
+    list_projects,
+    update_achievement,
+    update_integrity,
+    update_position,
+    update_profile,
+    update_project,
+    update_skills,
+)
+from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.worker import drain, run_one
@@ -89,10 +111,16 @@ def _quoted_label(app: dict[str, Any]) -> str:
 
 def _derived_net(app: dict[str, Any]) -> str:
     derived = app.get("comp_derived") or {}
-    net = derived.get("net_month")
+    net = app.get("net_month")
+    if net is None:
+        net = derived.get("net_month")
     if net is None:
         return ""
-    currency = derived.get("display_currency") or ""
+    currency = (
+        app.get("display_currency")
+        or derived.get("display_currency")
+        or ""
+    )
     return f"{net} {currency}".strip()
 
 
@@ -237,7 +265,7 @@ def cmd_applications_update(args: argparse.Namespace) -> None:
 def cmd_inbox_list(args: argparse.Namespace) -> None:
     status = args.status
     with _open(args) as ws:
-        items = [i.to_dict() for i in list_inbox(ws, status=status)]
+        items = [serialize_inbox_item(ws, i) for i in list_inbox(ws, status=status)]
     if args.json:
         _dump_json({"inbox": items})
         return
@@ -246,18 +274,24 @@ def cmd_inbox_list(args: argparse.Namespace) -> None:
             {
                 "id": i["id"],
                 "company": i.get("company"),
-                "title": i.get("title"),
-                "status": i["status"],
-                "knockouts": ",".join(i.get("knockouts") or []),
+                "role": i.get("role") or i.get("title"),
+                "location": i.get("location") or "",
+                "engagement": i.get("engagement") or "",
+                "net_month": _derived_net(i),
+                "why_keep": i.get("why_keep") or "",
+                "why_risk": i.get("why_risk") or "",
             }
             for i in items
         ],
         [
             ("id", "ID"),
             ("company", "COMPANY"),
-            ("title", "TITLE"),
-            ("status", "STATUS"),
-            ("knockouts", "KNOCKOUTS"),
+            ("role", "ROLE"),
+            ("location", "LOCATION"),
+            ("engagement", "ENGAGEMENT"),
+            ("net_month", "NET/MO"),
+            ("why_keep", "WHY KEEP"),
+            ("why_risk", "WHY RISK"),
         ],
     )
 
@@ -274,7 +308,7 @@ def cmd_inbox_promote(args: argparse.Namespace) -> None:
 
 def cmd_inbox_dismiss(args: argparse.Namespace) -> None:
     with _open(args) as ws:
-        item = dismiss(ws, args.id).to_dict()
+        item = serialize_inbox_item(ws, dismiss(ws, args.id))
     if args.json:
         _dump_json({"inbox_item": item})
         return
@@ -486,6 +520,345 @@ def cmd_pay_restamp(args: argparse.Namespace) -> None:
     print_kv(result)
 
 
+def _json_object_arg(value: str | None, *, flag: str = "--set") -> dict[str, Any]:
+    if not value:
+        return {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValidationError(f"{flag} must be a JSON object")
+    return parsed
+
+
+def _merge_set_and_flags(
+    args: argparse.Namespace, names: tuple[str, ...], *, skip_unset: bool
+) -> dict[str, Any]:
+    fields = _json_object_arg(getattr(args, "set", None))
+    for name in names:
+        if not hasattr(args, name):
+            continue
+        value = getattr(args, name)
+        if skip_unset and value is UNSET:
+            continue
+        if not skip_unset and value is None:
+            continue
+        fields[name] = value
+    return fields
+
+
+def _add_set_and_confirm(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--set",
+        dest="set",
+        help="JSON object of fields (agent contract for nested values)",
+    )
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Human confirmation: allow verified: true / integrity strengthen",
+    )
+
+
+def _truncate(text: Any, width: int = 56) -> str:
+    value = "" if text is None else str(text)
+    if len(value) <= width:
+        return value
+    return value[: width - 1] + "…"
+
+
+def cmd_profile_get(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        profile = get_profile(ws)
+    if args.json:
+        _dump_json({"profile": profile})
+        return
+    public = {k: v for k, v in profile.items() if k != "contact"}
+    public["contact"] = ",".join(sorted((profile.get("contact") or {})))
+    print_kv(public)
+
+
+def cmd_profile_update(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args,
+        ("name", "location", "citizenship", "relocation"),
+        skip_unset=True,
+    )
+    with _open(args) as ws:
+        profile = update_profile(ws, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"profile": profile})
+        return
+    print_kv({k: v for k, v in profile.items() if k != "contact"})
+
+
+def cmd_positions_list(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        rows = list_positions(ws)
+    if args.json:
+        _dump_json({"positions": rows})
+        return
+    print_table(
+        [
+            {
+                "id": r.get("id"),
+                "title": r.get("title"),
+                "employer": r.get("employer"),
+                "start": r.get("start"),
+                "end": r.get("end"),
+                "verified": r.get("verified"),
+            }
+            for r in rows
+        ],
+        [
+            ("id", "ID"),
+            ("title", "TITLE"),
+            ("employer", "EMPLOYER"),
+            ("start", "START"),
+            ("end", "END"),
+            ("verified", "VERIFIED"),
+        ],
+    )
+
+
+def cmd_positions_get(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        row = get_position(ws, args.id)
+    if args.json:
+        _dump_json({"position": row})
+        return
+    print_kv(row)
+
+
+def cmd_positions_create(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args,
+        (
+            "id",
+            "title",
+            "employer",
+            "location",
+            "start",
+            "end",
+            "client",
+            "scope_facts",
+            "default_achievements",
+            "verified",
+        ),
+        skip_unset=False,
+    )
+    with _open(args) as ws:
+        row = create_position(ws, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"position": row})
+        return
+    print_kv(row)
+
+
+def cmd_positions_update(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args,
+        (
+            "title",
+            "employer",
+            "location",
+            "start",
+            "end",
+            "client",
+            "scope_facts",
+            "default_achievements",
+            "verified",
+        ),
+        skip_unset=True,
+    )
+    with _open(args) as ws:
+        row = update_position(ws, args.id, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"position": row})
+        return
+    print_kv(row)
+
+
+def cmd_positions_confirm(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        row = confirm_position(ws, args.id, confirm=True)
+    if args.json:
+        _dump_json({"position": row})
+        return
+    print_kv(row)
+
+
+def cmd_achievements_list(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        rows = list_achievements(ws)
+    if args.json:
+        _dump_json({"achievements": rows})
+        return
+    print_table(
+        [
+            {
+                "id": r.get("id"),
+                "verified": r.get("verified"),
+                "tags": ",".join(r.get("tags") or []),
+                "text": _truncate(r.get("text")),
+            }
+            for r in rows
+        ],
+        [
+            ("id", "ID"),
+            ("verified", "VERIFIED"),
+            ("tags", "TAGS"),
+            ("text", "TEXT"),
+        ],
+    )
+
+
+def cmd_achievements_get(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        row = get_achievement(ws, args.id)
+    if args.json:
+        _dump_json({"achievement": row})
+        return
+    print_kv(row)
+
+
+def cmd_achievements_create(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args,
+        ("id", "text", "tags", "evidence", "verified"),
+        skip_unset=False,
+    )
+    with _open(args) as ws:
+        row = create_achievement(ws, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"achievement": row})
+        return
+    print_kv(row)
+
+
+def cmd_achievements_update(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args,
+        ("text", "tags", "evidence", "verified"),
+        skip_unset=True,
+    )
+    with _open(args) as ws:
+        row = update_achievement(ws, args.id, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"achievement": row})
+        return
+    print_kv(row)
+
+
+def cmd_achievements_confirm(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        row = confirm_achievement(ws, args.id, confirm=True)
+    if args.json:
+        _dump_json({"achievement": row})
+        return
+    print_kv(row)
+
+
+def cmd_projects_list(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        payload = list_projects(ws)
+    if args.json:
+        _dump_json(payload)
+        return
+    print_table(
+        [
+            {"id": r.get("id"), "name": r.get("name")}
+            for r in payload["projects"]
+        ],
+        [("id", "ID"), ("name", "NAME")],
+    )
+
+
+def cmd_projects_get(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        row = get_project(ws, args.id)
+    if args.json:
+        _dump_json({"project": row})
+        return
+    print_kv(row)
+
+
+def cmd_projects_create(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args, ("id", "name", "bullets", "note"), skip_unset=False
+    )
+    with _open(args) as ws:
+        row = create_project(ws, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"project": row})
+        return
+    print_kv(row)
+
+
+def cmd_projects_update(args: argparse.Namespace) -> None:
+    fields = _merge_set_and_flags(
+        args, ("name", "bullets", "note"), skip_unset=True
+    )
+    with _open(args) as ws:
+        row = update_project(ws, args.id, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"project": row})
+        return
+    print_kv(row)
+
+
+def cmd_skills_get(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        skills = get_skills(ws)
+    if args.json:
+        _dump_json({"skills": skills})
+        return
+    rows = []
+    for group in skills.get("skill_groups") or []:
+        names = ", ".join(s.get("name", "") for s in group.get("skills") or [])
+        rows.append({"group": group.get("name"), "skills": names})
+    print_table(rows, [("group", "GROUP"), ("skills", "SKILLS")])
+
+
+def cmd_skills_update(args: argparse.Namespace) -> None:
+    fields = _json_object_arg(getattr(args, "set", None))
+    with _open(args) as ws:
+        skills = update_skills(ws, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"skills": skills})
+        return
+    print_kv({"groups": len(skills.get("skill_groups") or [])})
+
+
+def cmd_integrity_get(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        integrity = get_integrity(ws)
+    if args.json:
+        _dump_json({"integrity": integrity})
+        return
+    print_kv(
+        {
+            "forbidden_phrases": len(integrity.get("forbidden_phrases") or []),
+            "line_traps": len(integrity.get("line_traps") or []),
+            "quantifier_terms": len(integrity.get("quantifier_terms") or []),
+        }
+    )
+
+
+def cmd_integrity_update(args: argparse.Namespace) -> None:
+    fields = _json_object_arg(getattr(args, "set", None))
+    with _open(args) as ws:
+        integrity = update_integrity(ws, fields, confirm=bool(args.confirm))
+    if args.json:
+        _dump_json({"integrity": integrity})
+        return
+    print_kv(
+        {
+            "forbidden_phrases": len(integrity.get("forbidden_phrases") or []),
+            "line_traps": len(integrity.get("line_traps") or []),
+            "quantifier_terms": len(integrity.get("quantifier_terms") or []),
+        }
+    )
+
+
 def cmd_cv_render(args: argparse.Namespace) -> None:
     with _open(args) as ws:
         result = render_cv(
@@ -624,6 +997,130 @@ def build_parser() -> argparse.ArgumentParser:
     p_cv.add_argument("--emphasis")
     p_cv.add_argument("--variant")
     p_cv.set_defaults(func=cmd_cv_render)
+
+    profile = nouns.add_parser("profile", help="Knowledge profile (contact lives here only)")
+    profile_verbs = profile.add_subparsers(dest="verb", required=True)
+    profile_verbs.add_parser("get", help="Get profile").set_defaults(func=cmd_profile_get)
+    p_prof_up = profile_verbs.add_parser("update", help="Update profile fields")
+    p_prof_up.add_argument("--name", default=UNSET)
+    p_prof_up.add_argument("--location", default=UNSET)
+    p_prof_up.add_argument("--citizenship", default=UNSET)
+    p_prof_up.add_argument("--relocation", default=UNSET)
+    _add_set_and_confirm(p_prof_up)
+    p_prof_up.set_defaults(func=cmd_profile_update)
+
+    positions = nouns.add_parser("positions", help="Employment history in knowledge/")
+    pos_verbs = positions.add_subparsers(dest="verb", required=True)
+    pos_verbs.add_parser("list", help="List positions").set_defaults(func=cmd_positions_list)
+    p_pos_get = pos_verbs.add_parser("get", help="Get one position")
+    p_pos_get.add_argument("id")
+    p_pos_get.set_defaults(func=cmd_positions_get)
+    p_pos_create = pos_verbs.add_parser("create", help="Create a draft position")
+    p_pos_create.add_argument("--id")
+    p_pos_create.add_argument("--title")
+    p_pos_create.add_argument("--employer")
+    p_pos_create.add_argument("--location")
+    p_pos_create.add_argument("--start")
+    p_pos_create.add_argument("--end")
+    p_pos_create.add_argument("--client")
+    p_pos_create.add_argument("--scope-facts", dest="scope_facts")
+    p_pos_create.add_argument("--default-achievements", dest="default_achievements")
+    p_pos_create.add_argument(
+        "--verified", action=argparse.BooleanOptionalAction, default=None
+    )
+    _add_set_and_confirm(p_pos_create)
+    p_pos_create.set_defaults(func=cmd_positions_create)
+    p_pos_up = pos_verbs.add_parser("update", help="Update a position")
+    p_pos_up.add_argument("id")
+    p_pos_up.add_argument("--title", default=UNSET)
+    p_pos_up.add_argument("--employer", default=UNSET)
+    p_pos_up.add_argument("--location", default=UNSET)
+    p_pos_up.add_argument("--start", default=UNSET)
+    p_pos_up.add_argument("--end", default=UNSET)
+    p_pos_up.add_argument("--client", default=UNSET)
+    p_pos_up.add_argument("--scope-facts", dest="scope_facts", default=UNSET)
+    p_pos_up.add_argument(
+        "--default-achievements", dest="default_achievements", default=UNSET
+    )
+    p_pos_up.add_argument(
+        "--verified", action=argparse.BooleanOptionalAction, default=UNSET
+    )
+    _add_set_and_confirm(p_pos_up)
+    p_pos_up.set_defaults(func=cmd_positions_update)
+    p_pos_cf = pos_verbs.add_parser("confirm", help="Human-only: set verified true")
+    p_pos_cf.add_argument("id")
+    p_pos_cf.set_defaults(func=cmd_positions_confirm)
+
+    achievements = nouns.add_parser("achievements", help="CV bullet bank")
+    ach_verbs = achievements.add_subparsers(dest="verb", required=True)
+    ach_verbs.add_parser("list", help="List achievements").set_defaults(
+        func=cmd_achievements_list
+    )
+    p_ach_get = ach_verbs.add_parser("get", help="Get one achievement")
+    p_ach_get.add_argument("id")
+    p_ach_get.set_defaults(func=cmd_achievements_get)
+    p_ach_create = ach_verbs.add_parser("create", help="Create a draft achievement")
+    p_ach_create.add_argument("--id")
+    p_ach_create.add_argument("--text")
+    p_ach_create.add_argument("--tags")
+    p_ach_create.add_argument("--evidence")
+    p_ach_create.add_argument(
+        "--verified", action=argparse.BooleanOptionalAction, default=None
+    )
+    _add_set_and_confirm(p_ach_create)
+    p_ach_create.set_defaults(func=cmd_achievements_create)
+    p_ach_up = ach_verbs.add_parser("update", help="Update an achievement")
+    p_ach_up.add_argument("id")
+    p_ach_up.add_argument("--text", default=UNSET)
+    p_ach_up.add_argument("--tags", default=UNSET)
+    p_ach_up.add_argument("--evidence", default=UNSET)
+    p_ach_up.add_argument(
+        "--verified", action=argparse.BooleanOptionalAction, default=UNSET
+    )
+    _add_set_and_confirm(p_ach_up)
+    p_ach_up.set_defaults(func=cmd_achievements_update)
+    p_ach_cf = ach_verbs.add_parser("confirm", help="Human-only: set verified true")
+    p_ach_cf.add_argument("id")
+    p_ach_cf.set_defaults(func=cmd_achievements_confirm)
+
+    projects = nouns.add_parser("projects", help="Personal projects in knowledge/")
+    proj_verbs = projects.add_subparsers(dest="verb", required=True)
+    proj_verbs.add_parser("list", help="List projects").set_defaults(func=cmd_projects_list)
+    p_proj_get = proj_verbs.add_parser("get", help="Get one project")
+    p_proj_get.add_argument("id")
+    p_proj_get.set_defaults(func=cmd_projects_get)
+    p_proj_create = proj_verbs.add_parser("create", help="Create a project")
+    p_proj_create.add_argument("--id")
+    p_proj_create.add_argument("--name")
+    p_proj_create.add_argument("--bullets")
+    p_proj_create.add_argument("--note")
+    _add_set_and_confirm(p_proj_create)
+    p_proj_create.set_defaults(func=cmd_projects_create)
+    p_proj_up = proj_verbs.add_parser("update", help="Update a project")
+    p_proj_up.add_argument("id")
+    p_proj_up.add_argument("--name", default=UNSET)
+    p_proj_up.add_argument("--bullets", default=UNSET)
+    p_proj_up.add_argument("--note", default=UNSET)
+    _add_set_and_confirm(p_proj_up)
+    p_proj_up.set_defaults(func=cmd_projects_update)
+
+    skills = nouns.add_parser("skills", help="Skill groups in knowledge/")
+    skill_verbs = skills.add_subparsers(dest="verb", required=True)
+    skill_verbs.add_parser("get", help="Get skill groups").set_defaults(func=cmd_skills_get)
+    p_sk_up = skill_verbs.add_parser("update", help="Update skill_groups / forbidden_claims")
+    _add_set_and_confirm(p_sk_up)
+    p_sk_up.set_defaults(func=cmd_skills_update)
+
+    integrity = nouns.add_parser("integrity", help="Honesty-gate rules (workspace data)")
+    integ_verbs = integrity.add_subparsers(dest="verb", required=True)
+    integ_verbs.add_parser("get", help="Get integrity rules").set_defaults(
+        func=cmd_integrity_get
+    )
+    p_in_up = integ_verbs.add_parser(
+        "update", help="Human-only: add integrity rules (cannot weaken via agent)"
+    )
+    _add_set_and_confirm(p_in_up)
+    p_in_up.set_defaults(func=cmd_integrity_update)
 
     sources = nouns.add_parser("sources", help="Configured source adapters")
     src_verbs = sources.add_subparsers(dest="verb", required=True)

@@ -21,7 +21,26 @@ from hunt.core.context import current_actor
 from hunt.core.cv import render as render_cv
 from hunt.core.errors import HuntError, ValidationError
 from hunt.core.events import list_events
-from hunt.core.inbox import dismiss, list_inbox, promote
+from hunt.core.facts import (
+    create_achievement,
+    create_position,
+    create_project,
+    get_achievement,
+    get_integrity,
+    get_position,
+    get_profile,
+    get_project,
+    get_skills,
+    list_achievements,
+    list_positions,
+    list_projects,
+    update_achievement,
+    update_position,
+    update_profile,
+    update_project,
+    update_skills,
+)
+from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.worker import drain, run_one
@@ -188,6 +207,117 @@ TOOLS: list[dict[str, Any]] = [
         "Recompute stored derived pay from current tax_homes + FX.",
         {},
     ),
+    _tool("profile_get", "Get knowledge profile. Contact lives only here.", {}),
+    _tool(
+        "profile_update",
+        "Update profile fields. Agents cannot change contact; do not invent facts.",
+        {
+            "name": {"type": "string"},
+            "location": {"type": "string"},
+            "citizenship": {"type": "string"},
+            "relocation": {"type": "string"},
+            "headlines": {"type": "object"},
+            "languages": {"type": "array"},
+            "education": {"type": "array"},
+        },
+    ),
+    _tool("positions_list", "List employment positions from knowledge YAML", {}),
+    _tool("positions_get", "Get one position", {"id": {"type": "string"}}, ["id"]),
+    _tool(
+        "positions_create",
+        "Create a draft position (verified false). Never invent employers or scope.",
+        {
+            "id": {"type": "string"},
+            "title": {"type": "string"},
+            "employer": {"type": "string"},
+            "location": {"type": "string"},
+            "start": {"type": "string"},
+            "end": {"type": "string"},
+            "client": {"type": "string"},
+            "scope_facts": {"type": "array"},
+            "default_achievements": {"type": "array"},
+        },
+        ["title", "employer", "start"],
+    ),
+    _tool(
+        "positions_update",
+        "Update a position. Agent writes become draft (verified false). Cannot weaken scope_facts.",
+        {
+            "id": {"type": "string"},
+            "title": {"type": "string"},
+            "employer": {"type": "string"},
+            "location": {"type": "string"},
+            "start": {"type": "string"},
+            "end": {"type": "string"},
+            "client": {"type": "string"},
+            "scope_facts": {"type": "array"},
+            "default_achievements": {"type": "array"},
+        },
+        ["id"],
+    ),
+    _tool("achievements_list", "List achievements from knowledge YAML", {}),
+    _tool(
+        "achievements_get",
+        "Get one achievement",
+        {"id": {"type": "string"}},
+        ["id"],
+    ),
+    _tool(
+        "achievements_create",
+        "Create a draft achievement (verified false). Do not invent metrics. Do not flip verified.",
+        {
+            "id": {"type": "string"},
+            "text": {"type": "string"},
+            "tags": {"type": "array"},
+            "evidence": {"type": "string"},
+        },
+        ["text", "evidence"],
+    ),
+    _tool(
+        "achievements_update",
+        "Update an achievement. Agent writes set verified false. The human must confirm.",
+        {
+            "id": {"type": "string"},
+            "text": {"type": "string"},
+            "tags": {"type": "array"},
+            "evidence": {"type": "string"},
+        },
+        ["id"],
+    ),
+    _tool("projects_list", "List projects and certifications", {}),
+    _tool("projects_get", "Get one project", {"id": {"type": "string"}}, ["id"]),
+    _tool(
+        "projects_create",
+        "Create a project. Personal-project scope must stay honest.",
+        {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "bullets": {"type": "array"},
+            "note": {"type": "string"},
+        },
+        ["name"],
+    ),
+    _tool(
+        "projects_update",
+        "Update a project",
+        {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "bullets": {"type": "array"},
+            "note": {"type": "string"},
+        },
+        ["id"],
+    ),
+    _tool("skills_get", "Get skill groups and forbidden_claims", {}),
+    _tool(
+        "skills_update",
+        "Update skill_groups. Agents cannot remove forbidden_claims.",
+        {
+            "skill_groups": {"type": "array"},
+            "forbidden_claims": {"type": "array"},
+        },
+    ),
+    _tool("integrity_get", "Get integrity rules. Agents cannot write this file.", {}),
 ]
 
 
@@ -221,7 +351,7 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         return _ok({"application": app})
     if name == "inbox_list":
         status = arguments.get("status", "pending")
-        items = [i.to_dict() for i in list_inbox(ws, status=status)]
+        items = [serialize_inbox_item(ws, i) for i in list_inbox(ws, status=status)]
         return _ok({"inbox": items})
     if name == "inbox_promote":
         item_id = arguments["id"]
@@ -229,7 +359,7 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         app = promote(ws, item_id, **fields).to_dict()
         return _ok({"application": app})
     if name == "inbox_dismiss":
-        item = dismiss(ws, arguments["id"]).to_dict()
+        item = serialize_inbox_item(ws, dismiss(ws, arguments["id"]))
         return _ok({"inbox_item": item})
     if name == "jobs_list":
         jobs = [
@@ -311,6 +441,111 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         return _ok(estimate)
     if name == "pay_restamp":
         return _ok(restamp_derived(ws))
+    if name == "profile_get":
+        return _ok({"profile": get_profile(ws)})
+    if name == "profile_update":
+        fields = {
+            key: arguments[key]
+            for key in (
+                "name",
+                "location",
+                "citizenship",
+                "relocation",
+                "headlines",
+                "languages",
+                "education",
+            )
+            if key in arguments
+        }
+        return _ok({"profile": update_profile(ws, fields)})
+    if name == "positions_list":
+        return _ok({"positions": list_positions(ws)})
+    if name == "positions_get":
+        return _ok({"position": get_position(ws, arguments["id"])})
+    if name == "positions_create":
+        fields = {
+            key: arguments[key]
+            for key in (
+                "id",
+                "title",
+                "employer",
+                "location",
+                "start",
+                "end",
+                "client",
+                "scope_facts",
+                "default_achievements",
+            )
+            if key in arguments
+        }
+        return _ok({"position": create_position(ws, fields)})
+    if name == "positions_update":
+        fields = {
+            key: arguments[key]
+            for key in (
+                "title",
+                "employer",
+                "location",
+                "start",
+                "end",
+                "client",
+                "scope_facts",
+                "default_achievements",
+            )
+            if key in arguments
+        }
+        return _ok(
+            {"position": update_position(ws, arguments["id"], fields)}
+        )
+    if name == "achievements_list":
+        return _ok({"achievements": list_achievements(ws)})
+    if name == "achievements_get":
+        return _ok({"achievement": get_achievement(ws, arguments["id"])})
+    if name == "achievements_create":
+        fields = {
+            key: arguments[key]
+            for key in ("id", "text", "tags", "evidence")
+            if key in arguments
+        }
+        return _ok({"achievement": create_achievement(ws, fields)})
+    if name == "achievements_update":
+        fields = {
+            key: arguments[key]
+            for key in ("text", "tags", "evidence")
+            if key in arguments
+        }
+        return _ok(
+            {"achievement": update_achievement(ws, arguments["id"], fields)}
+        )
+    if name == "projects_list":
+        return _ok(list_projects(ws))
+    if name == "projects_get":
+        return _ok({"project": get_project(ws, arguments["id"])})
+    if name == "projects_create":
+        fields = {
+            key: arguments[key]
+            for key in ("id", "name", "bullets", "note")
+            if key in arguments
+        }
+        return _ok({"project": create_project(ws, fields)})
+    if name == "projects_update":
+        fields = {
+            key: arguments[key]
+            for key in ("name", "bullets", "note")
+            if key in arguments
+        }
+        return _ok({"project": update_project(ws, arguments["id"], fields)})
+    if name == "skills_get":
+        return _ok({"skills": get_skills(ws)})
+    if name == "skills_update":
+        fields = {
+            key: arguments[key]
+            for key in ("skill_groups", "forbidden_claims")
+            if key in arguments
+        }
+        return _ok({"skills": update_skills(ws, fields)})
+    if name == "integrity_get":
+        return _ok({"integrity": get_integrity(ws)})
     return _err(f"unknown tool: {name}")
 
 
