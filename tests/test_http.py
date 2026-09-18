@@ -347,9 +347,139 @@ def test_spa_and_meta(client):
     assert "Hunt" in page.text
     inbox = http.get("/inbox")
     assert inbox.status_code == 200
+    profile = http.get("/profile")
+    assert profile.status_code == 200
+    assert "Hunt" in profile.text
     meta = http.get("/api/meta")
     assert meta.json()["profile_name"] == "Jane Doe"
     assert meta.json()["auth_required"] is False
     missing = http.get("/api/applications/no-such-id")
     assert missing.status_code == 404
     assert "not found" in missing.json()["error"]
+
+
+def test_profile_editor_ui_contract():
+    """AGU-19 / AGU-16 §3: profile editor primitives; no sixth tab; no verified checkbox."""
+    static = ROOT / "hunt" / "http" / "static"
+    js = (static / "app.js").read_text()
+    css = (static / "hunt.css").read_text()
+    blob = js + css
+    assert 'href="/profile"' in js
+    assert 'if (path === "/profile")' in js
+    assert 'if (ev.key === "p") go("/profile")' in js
+    assert 'data-primitive="WorkspaceChip" href="/profile"' in js
+    assert 'data-primitive="DraftBadge"' in js
+    assert 'data-primitive="VerifiedBadge"' in js
+    assert 'data-primitive="ConfirmVerifyDialog"' in js
+    assert 'data-primitive="ScopeFactsEditor"' in js
+    assert 'data-primitive="ProfileNav"' in js
+    assert 'data-primitive="IntegrityPanel"' in js
+    assert 'data-primitive="KnowledgeConflict"' in js
+    assert "Confirm this fact?" in js
+    assert "Unverified claims never appear on a CV" in js
+    assert "scope_facts" in js
+    assert "forbidden_claims" in js
+    assert "If-Match" in js
+    assert '["/ ", "Board", "board"]' in js
+    assert '["/inbox", "Inbox", "inbox"]' in js
+    assert '["/sources", "Sources", "sources"]' in js
+    assert '["/jobs", "Jobs", "jobs"]' in js
+    assert '["/profile", "Profile", "profile"]' not in js
+    assert 'name="verified"' not in js
+    assert "type=checkbox" not in js.lower() or "data-present-index" in js
+    assert 'data-path="achievements' in js
+    assert "Apply for Jane Doe" not in js
+    assert "Submit to employer" not in js
+    assert "Send this CV" not in js
+    assert 'data-primitive="FloorBadge"' not in blob
+    assert "clears_floor" not in blob
+    assert "--draft-fg" in css
+    assert "[data-primitive=\"DraftBadge\"]" in css
+    assert "[data-primitive=\"ProfileNav\"]" in css
+    assert "[data-primitive=\"KnowledgeConflict\"]" in css
+
+
+def _cv(args, env, check=True):
+    r = subprocess.run(
+        [sys.executable, "-m", "hunt.cv", *args],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if check and r.returncode != 0:
+        print(r.stdout, r.stderr, sep="\n")
+        raise AssertionError(f"FAILED ({r.returncode}): hunt.cv {' '.join(args)}")
+    return r
+
+
+def _pdf_text(pdf: Path) -> str:
+    return subprocess.run(
+        ["pdftotext", str(pdf), "-"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_profile_editor_round_trip_conflict_and_honesty(client):
+    """Edit Jane Doe via HTTP UI, reload, conflict on stale YAML, CV stays honest."""
+    http, data, env = client
+    listed = http.get("/api/achievements")
+    assert listed.status_code == 200
+    payload = listed.json()
+    ids = [row["id"] for row in payload["achievements"]]
+    assert "ec-monitoring" in ids
+    assert "wc-gitops" in ids
+    rev = payload["revision"]
+    assert rev
+
+    monitoring = next(row for row in payload["achievements"] if row["id"] == "ec-monitoring")
+    assert monitoring["verified"] is False
+    patched = http.patch(
+        "/api/achievements/ec-monitoring",
+        json={
+            "text": monitoring["text"],
+            "evidence": "Grafana dashboards still in place at exit; figure still an estimate.",
+        },
+        headers={"If-Match": rev},
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["achievement"]["verified"] is False
+    assert body["achievement"]["id"] == "ec-monitoring"
+    new_rev = body["revision"]
+    assert new_rev and new_rev != rev
+
+    reloaded = http.get("/api/achievements/ec-monitoring")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["achievement"]["evidence"].startswith("Grafana dashboards")
+    assert reloaded.json()["achievement"]["verified"] is False
+
+    stale = http.patch(
+        "/api/achievements/wc-gitops",
+        json={"evidence": "stale write must not land"},
+        headers={"If-Match": rev},
+    )
+    assert stale.status_code == 409
+    assert "not saved" in stale.json()["error"].lower()
+    gitops = http.get("/api/achievements/wc-gitops").json()["achievement"]
+    assert gitops["evidence"] != "stale write must not land"
+
+    pdf = data / "attachments" / "cv" / "Jane_Doe_CV.pdf"
+    rendered = _cv(["render"], env)
+    assert "ec-monitoring" in rendered.stderr
+    text = _pdf_text(pdf)
+    assert "GitOps delivery" in text
+    assert "cut alert noise by roughly half" not in text
+    _cv(["finalize", str(pdf)], env)
+    verdict = json.loads(_cv(["verify", str(pdf), "--json"], env).stdout)
+    assert verdict["ok"], verdict.get("findings")
+
+    confirmed = http.post(
+        "/api/positions/widgetcorp/confirm",
+        headers={"If-Match": http.get("/api/positions").json()["revision"]},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["position"]["verified"] is True
+    assert confirmed.json()["position"]["employer"] == "WidgetCorp"

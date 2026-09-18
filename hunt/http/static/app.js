@@ -26,10 +26,19 @@
   const INBOX_COLS = ["Company", "Role", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
   const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
+  const PROFILE_TABS = [
+    ["profile", "Profile"],
+    ["positions", "Positions"],
+    ["achievements", "Achievements"],
+    ["skills", "Skills"],
+    ["projects", "Projects"],
+    ["integrity", "Integrity"],
+  ];
+  const SKILL_LEVELS = ["production", "working", "limited", "homelab"];
 
   const state = {
     meta: null,
-    route: { name: "board", id: null },
+    route: { name: "board", id: null, tab: null },
     token: sessionStorage.getItem(TOKEN_KEY) || "",
     toast: null,
     dialog: null,
@@ -40,6 +49,9 @@
     jobStateFilters: new Set(JOB_STATES),
     jobTypeFilters: new Set(JOB_TYPES),
     quotedDirty: false,
+    profileDirty: false,
+    knowledge: null,
+    profileConflict: null,
   };
 
   function $(sel, root = document) {
@@ -71,6 +83,7 @@
     if (opts.body && !(opts.body instanceof FormData) && !headers["Content-Type"]) {
       headers["Content-Type"] = "application/json";
     }
+    if (opts.ifMatch) headers["If-Match"] = `"${opts.ifMatch}"`;
     let res;
     try {
       res = await fetch(path, Object.assign({}, opts, { headers }));
@@ -112,11 +125,17 @@
 
   function parseRoute() {
     const path = location.pathname.replace(/\/+$/, "") || "/";
+    const params = new URLSearchParams(location.search);
     if (path === "/") return { name: "board" };
     if (path === "/inbox") return { name: "inbox" };
     if (path === "/sources") return { name: "sources" };
     if (path === "/jobs") return { name: "jobs" };
     if (path === "/applications/new") return { name: "new" };
+    if (path === "/profile") {
+      const allowed = PROFILE_TABS.map((t) => t[0]);
+      const tab = params.get("tab") || "positions";
+      return { name: "profile", tab: allowed.includes(tab) ? tab : "positions" };
+    }
     const m = path.match(/^\/applications\/([^/]+)$/);
     if (m) return { name: "detail", id: decodeURIComponent(m[1]) };
     return { name: "notfound" };
@@ -195,6 +214,80 @@
     return `<span data-primitive="StatusPill" class="status-${esc(s)}">${esc(s)}</span>`;
   }
 
+  function DraftBadge() {
+    return `<span data-primitive="DraftBadge">Draft — not on CVs</span>`;
+  }
+
+  function VerifiedBadge() {
+    return `<span data-primitive="VerifiedBadge">Verified</span>`;
+  }
+
+  function ProfileNav(current) {
+    const items = PROFILE_TABS.map(([key, label]) =>
+      NavItem(`/profile?tab=${key}`, label, current === key)
+    ).join("");
+    return `<nav data-primitive="ProfileNav">${items}</nav>`;
+  }
+
+  function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function setPath(obj, path, value) {
+    const parts = path.split(".");
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const key = parts[i];
+      const next = parts[i + 1];
+      const asIndex = /^\d+$/.test(next);
+      if (cur[key] == null) cur[key] = asIndex ? [] : {};
+      cur = cur[key];
+    }
+    cur[parts[parts.length - 1]] = value;
+  }
+
+  function getPath(obj, path) {
+    return path.split(".").reduce((acc, key) => (acc == null ? acc : acc[key]), obj);
+  }
+
+  function weakEvidence(ev) {
+    return !String(ev || "").trim() || String(ev).trim().toLowerCase() === "own work.";
+  }
+
+  function isQuantified(text, terms) {
+    const body = String(text || "");
+    if ((terms || []).some((q) => q && body.includes(q))) return true;
+    return /\d/.test(body);
+  }
+
+  function canConfirmAchievement(row, terms) {
+    if (!String(row.evidence || "").trim()) return false;
+    if (isQuantified(row.text, terms) && weakEvidence(row.evidence)) return false;
+    return true;
+  }
+
+  function monthKey(value) {
+    if (!value || value === "present") return value === "present" ? 999999 : null;
+    const m = String(value).match(/^(\d{4})-(\d{2})/);
+    if (!m) return null;
+    return Number(m[1]) * 12 + Number(m[2]);
+  }
+
+  function overlappingPositions(positions) {
+    const dated = (positions || [])
+      .map((p, i) => ({ i, start: monthKey(p.start), end: monthKey(p.end || "present"), label: p.employer || p.title || p.id }))
+      .filter((p) => p.start != null && p.end != null);
+    const hits = [];
+    for (let a = 0; a < dated.length; a++) {
+      for (let b = a + 1; b < dated.length; b++) {
+        const x = dated[a];
+        const y = dated[b];
+        if (x.start <= y.end && y.start <= x.end) hits.push(`${x.label} overlaps ${y.label}`);
+      }
+    }
+    return hits;
+  }
+
   function JobStatePill(st) {
     return `<span data-primitive="JobStatePill" class="job-${esc(st)}">${esc(st)}</span>`;
   }
@@ -260,7 +353,7 @@
   function input(name, value, attrs = "") {
     return `<input data-primitive="TextInput" name="${esc(name)}" value="${esc(value ?? "")}" ${attrs}>`;
   }
-  function select(name, value, options) {
+  function select(name, value, options, attrs = "") {
     const opts = options
       .map((o) => {
         const v = typeof o === "string" ? o : o.value;
@@ -268,10 +361,12 @@
         return `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(l)}</option>`;
       })
       .join("");
-    return `<select data-primitive="Select" name="${esc(name)}">${opts}</select>`;
+    const nameAttr = name ? `name="${esc(name)}"` : "";
+    return `<select data-primitive="Select" ${nameAttr} ${attrs}>${opts}</select>`;
   }
-  function textarea(name, value) {
-    return `<textarea data-primitive="Textarea" name="${esc(name)}">${esc(value ?? "")}</textarea>`;
+  function textarea(name, value, attrs = "") {
+    const nameAttr = name ? `name="${esc(name)}"` : "";
+    return `<textarea data-primitive="Textarea" ${nameAttr} ${attrs}>${esc(value ?? "")}</textarea>`;
   }
 
   function nav(current, badges) {
@@ -286,7 +381,8 @@
       )
       .join("");
     const ws = state.meta || {};
-    const chip = `<span data-primitive="WorkspaceChip">${esc(ws.workspace || "workspace")}<span class="profile"> · ${esc(ws.profile_name || "")}</span></span>`;
+    const chipCurrent = current === "profile" ? `aria-current="page"` : "";
+    const chip = `<a data-primitive="WorkspaceChip" href="/profile" ${chipCurrent}>${esc(ws.workspace || "workspace")}<span class="profile"> · ${esc(ws.profile_name || "")}</span></a>`;
     return {
       bar: `<header data-primitive="AppBar">
         <a class="wordmark" href="/">Hunt</a>
@@ -341,7 +437,8 @@
   function shell(current, badges, body) {
     const n = nav(current, badges);
     const dirty = state.quotedDirty && current === "board" && state.route.name === "detail" ? " quoted-dirty" : "";
-    return `<div data-primitive="AppShell" class="${dirty.trim()}">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
+    const pdirty = state.profileDirty && current === "profile" ? " profile-dirty" : "";
+    return `<div data-primitive="AppShell" class="${(dirty + pdirty).trim()}">${n.bar}<main class="page">${body}</main>${n.tabs}${toastHtml()}${dialogHtml()}</div>`;
   }
 
   function dialogHtml() {
@@ -379,6 +476,18 @@
           <div class="dialog-actions">
             ${Btn("Cancel", { variant: "ghost", attrs: "data-close-dialog" })}
             ${Btn(d.ok, { variant: d.danger ? "danger" : "primary", attrs: `data-confirm-ok="${esc(d.action)}"` })}
+          </div>
+        </div>
+      </div>`;
+    }
+    if (d.kind === "confirm-verify") {
+      return `<div class="scrim" data-close-dialog>
+        <div data-primitive="ConfirmVerifyDialog" role="dialog" aria-modal="true">
+          <h2>Confirm this fact?</h2>
+          <div class="dialog-body">Unverified claims never appear on a CV. Confirm only what Jane Doe can defend in an interview.</div>
+          <div class="dialog-actions">
+            ${Btn("Cancel", { variant: "ghost", attrs: "data-close-dialog" })}
+            ${Btn("Confirm", { variant: "primary", attrs: `data-confirm-verify="${esc(d.kindTarget)}:${esc(d.id)}"` })}
           </div>
         </div>
       </div>`;
@@ -901,6 +1010,716 @@
     );
   }
 
+  function knowledgeConflictHtml() {
+    const c = state.profileConflict;
+    if (!c) return "";
+    const diff = c.showDiff
+      ? `<div class="conflict-diff">
+          <div class="section"><h2>Your draft</h2><pre>${esc(c.local || "")}</pre></div>
+          <div class="section"><h2>On disk</h2><pre>${esc(c.server || "")}</pre></div>
+        </div>`
+      : "";
+    return `<div data-primitive="KnowledgeConflict">
+      <span class="msg">${esc(c.message || "This fact changed elsewhere. Your draft is not saved.")}</span>
+      <div class="conflict-actions">
+        ${Btn("Reload", { attrs: "data-conflict-reload" })}
+        ${Btn("Review diff", { variant: "ghost", attrs: "data-conflict-diff" })}
+        ${Btn("Cancel", { variant: "ghost", attrs: "data-conflict-cancel" })}
+      </div>
+      ${diff}
+    </div>`;
+  }
+
+  function rowList(path, rows, fields, addLabel) {
+    const items = (rows || [])
+      .map((row, i) => {
+        const controls = fields
+          .map((f) => {
+            if (f.type === "select") {
+              return select("", row[f.key] || "", f.options, `data-path="${path}.${i}.${f.key}"`);
+            }
+            return input("", row[f.key] || "", `data-path="${path}.${i}.${f.key}" placeholder="${esc(f.placeholder || f.key)}"`);
+          })
+          .join("");
+        return `<div class="row-list-row">${controls}${Btn("Remove", { variant: "ghost", attrs: `data-remove-path="${path}.${i}"` })}</div>`;
+      })
+      .join("");
+    return `<div class="row-list">${items}${Btn(addLabel, { variant: "ghost", attrs: `data-add-path="${path}"` })}</div>`;
+  }
+
+  function ScopeFactsEditor(facts, path) {
+    const rows = (facts || [])
+      .map(
+        (fact, i) => `<div class="scope-row">
+          ${textarea("", fact, `data-path="${path}.${i}" class="scope-input"`)}
+          ${Btn("Remove", { variant: "ghost", attrs: `data-remove-path="${path}.${i}"` })}
+        </div>`
+      )
+      .join("");
+    return `<div data-primitive="ScopeFactsEditor">
+      ${rows}
+      ${Btn("Add fact", { variant: "ghost", attrs: `data-add-path="${path}"` })}
+      <div class="help">Hard boundaries. Interviewers must not catch an over-claim.</div>
+    </div>`;
+  }
+
+  function IntegrityPanel(integ) {
+    const phrases = (integ.forbidden_phrases || []).map((p) => `<li>${esc(p)}</li>`).join("") || "<li class=\"muted\">None</li>";
+    const traps = (integ.line_traps || [])
+      .map((t) => `<li>never put ${esc(t.term)} on a line with ${esc(t.never_with)}</li>`)
+      .join("") || "<li class=\"muted\">None</li>";
+    const quants = (integ.quantifier_terms || []).map((q) => `<li>${esc(q)}</li>`).join("") || "<li class=\"muted\">None</li>";
+    return `<div data-primitive="IntegrityPanel" class="section">
+      <p class="fact-caption">Honesty rules for this workspace. Hunt source does not hardcode employers. To change a rule, edit $HUNT_DATA/knowledge/integrity.yaml — agents must not weaken entries.</p>
+      <h2>Forbidden phrases</h2>
+      <ul>${phrases}</ul>
+      <h2>Line traps</h2>
+      <ul>${traps}</ul>
+      <h2>Quantifier terms</h2>
+      <ul>${quants}</ul>
+    </div>`;
+  }
+
+  function profileHeader(draft, actions) {
+    const name = (draft.profile && draft.profile.name) || "Profile";
+    const headline = (draft.profile && draft.profile.headlines && draft.profile.headlines.generic) || "";
+    const positions = draft.positions || [];
+    const achievements = draft.achievements || [];
+    let drafts = 0;
+    let verified = 0;
+    for (const row of positions.concat(achievements)) {
+      if (row && row.verified) verified += 1;
+      else drafts += 1;
+    }
+    return `<div data-primitive="PageHeader" class="profile-header">
+      <h1>${esc(name)}</h1>
+      <p class="profile-kicker">${esc(headline)}</p>
+      <span class="profile-counts">Draft ${drafts} · Verified ${verified}</span>
+      <div class="header-actions">${actions || ""}</div>
+      ${ProfileNav(state.route.tab)}
+    </div>`;
+  }
+
+  function renderProfileTab(draft) {
+    const profile = draft.profile || {};
+    const headlines = profile.headlines || {};
+    const headlineFields = Object.keys(headlines).length
+      ? Object.keys(headlines)
+          .map((key) => FormField(`Headline (${key})`, input("", headlines[key] || "", `data-path="profile.headlines.${key}"`), { span2: true }))
+          .join("")
+      : FormField("Headline (generic)", input("", "", `data-path="profile.headlines.generic"`), { span2: true });
+    const langs = rowList("profile.languages", profile.languages || [], [
+      { key: "name", placeholder: "Language" },
+      { key: "level", placeholder: "level" },
+    ], "Add language");
+    const edu = rowList("profile.education", profile.education || [], [
+      { key: "degree", placeholder: "Degree" },
+      { key: "institution", placeholder: "Institution" },
+      { key: "year", placeholder: "Year" },
+    ], "Add education");
+    const contact = profile.contact || {};
+    return `<form id="profile-form" class="section profile-page">
+      <div class="form-grid">
+        ${FormField("Name", input("", profile.name || "", `data-path="profile.name"`))}
+        ${headlineFields}
+        ${FormField("Location", input("", profile.location || "", `data-path="profile.location"`))}
+        ${FormField("Citizenship", input("", profile.citizenship || "", `data-path="profile.citizenship"`))}
+        ${FormField("Languages", langs, { span2: true })}
+        ${FormField("Email", input("", contact.email || "", `type="email" data-path="profile.contact.email" autocomplete="off"`))}
+        ${FormField("Phone", input("", contact.phone || "", `data-path="profile.contact.phone" autocomplete="off"`))}
+        ${FormField("LinkedIn", input("", contact.linkedin || "", `data-path="profile.contact.linkedin"`))}
+        ${FormField("Education", edu, { span2: true })}
+      </div>
+      <div class="form-actions">${Btn("Save profile", { variant: "primary", type: "submit" })}</div>
+    </form>`;
+  }
+
+  function renderPositionsTab(draft) {
+    const positions = (draft.positions || []).slice().sort((a, b) => String(b.start || "").localeCompare(String(a.start || "")));
+    const overlaps = overlappingPositions(draft.positions || []);
+    const achIds = (draft.achievements || []).map((a) => a.id).filter(Boolean);
+    if (!positions.length) {
+      return EmptyState("No positions yet", "Add the current role first.", Btn("Add position", { variant: "primary", attrs: "data-add-position" }));
+    }
+    const cards = positions
+      .map((p) => {
+        const idx = draft.positions.indexOf(p);
+        const present = !p.end || p.end === "present";
+        const facts = p.scope_facts || [];
+        const defaults = p.default_achievements || [];
+        const chips = defaults
+          .map((id) => `<span class="chip"><a href="/profile?tab=achievements#ach-${esc(id)}">${esc(id)}</a>${Btn("×", { variant: "ghost", attrs: `data-remove-path="positions.${idx}.default_achievements.${defaults.indexOf(id)}"` })}</span>`)
+          .join("");
+        const unused = achIds.filter((id) => !defaults.includes(id));
+        const addSel = unused.length
+          ? `<select data-primitive="Select" data-add-achievement="${idx}"><option value="">Add achievement…</option>${unused.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("")}</select>`
+          : "";
+        const warn = !p.verified && !facts.length ? `<p class="overlap-warn">Add scope facts before confirming.</p>` : "";
+        const employerErr = !String(p.employer || "").trim() ? `<div class="err">Employer is required.</div>` : "";
+        const confirmBtn = p.verified
+          ? Btn("Mark as draft", { variant: "ghost", attrs: `data-unverify="position:${esc(p.id || "")}:${idx}"` })
+          : Btn("Confirm", {
+              variant: "primary",
+              attrs: `data-open-confirm="position:${esc(p.id || "")}" ${!p.id || !facts.length || !String(p.employer || "").trim() ? "disabled" : ""}`,
+            });
+        return `<article class="fact-card${p.verified ? "" : " is-draft"}" data-position-index="${idx}">
+          <div class="fact-card-head">
+            <h2>${esc(p.title || "New position")} · ${esc(p.employer || "")}</h2>
+            ${p.verified ? VerifiedBadge() : DraftBadge()}
+            ${p.id ? CopyId(p.id) : ""}
+          </div>
+          ${warn}
+          <div class="form-grid">
+            ${FormField("Title", input("", p.title || "", `data-path="positions.${idx}.title"`))}
+            ${FormField("Employer", input("", p.employer || "", `data-path="positions.${idx}.employer"`) + employerErr)}
+            ${FormField("Location", input("", p.location || "", `data-path="positions.${idx}.location"`))}
+            ${FormField("Start", input("", p.start || "", `data-path="positions.${idx}.start" placeholder="YYYY-MM"`))}
+            ${FormField("End", input("", present ? "present" : p.end || "", `data-path="positions.${idx}.end" ${present ? "disabled" : ""}`))}
+            ${FormField("Current role", `<label><input type="checkbox" data-present-index="${idx}" ${present ? "checked" : ""}> present</label>`)}
+            ${FormField("Scope facts", ScopeFactsEditor(facts, `positions.${idx}.scope_facts`), { span2: true })}
+            ${FormField("Default achievements", `<div class="chip-row">${chips}${addSel}</div>`, { span2: true })}
+          </div>
+          <div class="fact-actions">
+            ${Btn("Save position", { variant: "primary", attrs: `data-save-position="${idx}"` })}
+            ${confirmBtn}
+            ${p.id ? CommandHint(`hunt positions update ${p.id} --json`) : ""}
+          </div>
+        </article>`;
+      })
+      .join("");
+    const overlapHtml = overlaps.length ? `<p class="overlap-warn">${esc(overlaps.join(" · "))}</p>` : "";
+    return `${overlapHtml}${cards}<p>${Btn("Add position", { attrs: "data-add-position" })}</p>`;
+  }
+
+  function renderAchievementsTab(draft) {
+    const achievements = draft.achievements || [];
+    const positions = draft.positions || [];
+    const terms = (draft.integrity && draft.integrity.quantifier_terms) || ["%", "x faster", "fold"];
+    if (!achievements.length) {
+      return EmptyState(
+        "No achievements",
+        "Draft bullets here; they will not render until you confirm.",
+        Btn("Add achievement", { variant: "primary", attrs: "data-add-achievement-row" })
+      );
+    }
+    const assigned = new Set();
+    const groups = [];
+    for (const pos of positions) {
+      const ids = pos.default_achievements || [];
+      const rows = ids.map((id) => achievements.find((a) => a.id === id)).filter(Boolean);
+      rows.forEach((a) => assigned.add(a.id));
+      groups.push({ title: `${pos.employer || pos.id} · ${pos.title || ""}`, rows });
+    }
+    const orphans = achievements.filter((a) => !assigned.has(a.id));
+    if (orphans.length) groups.push({ title: "Unassigned", rows: orphans });
+
+    const cards = groups
+      .map((g) => {
+        const body = g.rows
+          .map((a) => {
+            const idx = achievements.indexOf(a);
+            const confirmDisabled = !a.id || !canConfirmAchievement(a, terms);
+            const evidenceErr = !String(a.evidence || "").trim()
+              ? "Evidence is required to confirm."
+              : isQuantified(a.text, terms) && weakEvidence(a.evidence)
+                ? "Quantified claims need evidence beyond “Own work.”"
+                : "";
+            const confirmBtn = a.verified
+              ? Btn("Mark as draft", { variant: "ghost", attrs: `data-unverify="achievement:${esc(a.id)}:${idx}"` })
+              : Btn("Confirm", {
+                  variant: "primary",
+                  attrs: `data-open-confirm="achievement:${esc(a.id || "")}" ${confirmDisabled ? "disabled" : ""}`,
+                });
+            return `<article class="fact-card${a.verified ? "" : " is-draft"}" id="ach-${esc(a.id || idx)}">
+              <div class="fact-card-head">
+                <h2>${esc(a.id || "New achievement")}</h2>
+                ${a.verified ? VerifiedBadge() : DraftBadge()}
+                ${a.id ? CopyId(a.id) : ""}
+              </div>
+              ${a.verified ? "" : `<p class="fact-caption">Excluded from CVs until you confirm.</p>`}
+              <div class="form-grid">
+                ${FormField("Text", textarea("", a.text || "", `data-path="achievements.${idx}.text"`), { span2: true })}
+                ${FormField("Tags", input("", (a.tags || []).join(", "), `data-path="achievements.${idx}.tagsText"`), { help: "Comma-separated. Existing vocabulary is reused when possible." })}
+                ${FormField("Evidence", textarea("", a.evidence || "", `data-path="achievements.${idx}.evidence"`) + (evidenceErr ? `<div class="err">${esc(evidenceErr)}</div>` : ""), { span2: true, help: "A repo, doc, review, or named manager reference." })}
+              </div>
+              <div class="fact-actions">
+                ${Btn("Save achievement", { variant: "primary", attrs: `data-save-achievement="${idx}"` })}
+                ${confirmBtn}
+                ${a.id ? CommandHint(`hunt achievements update ${a.id} --json`) : ""}
+              </div>
+            </article>`;
+          })
+          .join("");
+        return `<section class="profile-page"><h2 class="fact-caption">${esc(g.title)}</h2>${body}</section>`;
+      })
+      .join("");
+    return `${cards}<p>${Btn("Add achievement", { attrs: "data-add-achievement-row" })}</p>`;
+  }
+
+  function renderSkillsTab(draft) {
+    const skills = draft.skills || {};
+    const groups = skills.skill_groups || [];
+    const posIds = (draft.positions || []).map((p) => p.id).filter(Boolean);
+    const scopeOpts = [""].concat(posIds);
+    if (!groups.length) {
+      return EmptyState("No skills yet", "Add a group, then the tools you can whiteboard.", Btn("Add group", { attrs: "data-add-skill-group" }));
+    }
+    const body = groups
+      .map((g, gi) => {
+        const rows = (g.skills || [])
+          .map((s, si) => {
+            return `<div class="row-list-row">
+              ${input("", s.name || "", `data-path="skills.skill_groups.${gi}.skills.${si}.name" placeholder="Skill"`)}
+              ${select("", s.level || "working", SKILL_LEVELS, `data-path="skills.skill_groups.${gi}.skills.${si}.level"`)}
+              ${select("", s.employer_scope || "", scopeOpts, `data-path="skills.skill_groups.${gi}.skills.${si}.employer_scope"`)}
+              ${Btn("Remove", { variant: "ghost", attrs: `data-remove-path="skills.skill_groups.${gi}.skills.${si}"` })}
+            </div>`;
+          })
+          .join("");
+        return `<article class="fact-card">
+          <div class="fact-card-head">
+            ${FormField("Group name", input("", g.name || "", `data-path="skills.skill_groups.${gi}.name"`))}
+          </div>
+          <p class="fact-caption">production = operated in a real job and can whiteboard it. Employer scope omits the skill from generic lines.</p>
+          <div class="row-list">${rows}${Btn("Add skill", { variant: "ghost", attrs: `data-add-skill="${gi}"` })}</div>
+        </article>`;
+      })
+      .join("");
+    const claims = (skills.forbidden_claims || []).map((c) => `<li>${esc(c)}</li>`).join("") || `<li class="muted">None</li>`;
+    return `${body}<p>${Btn("Add group", { attrs: "data-add-skill-group" })} ${Btn("Save skills", { variant: "primary", attrs: "data-save-skills" })} ${CommandHint("hunt skills update --json")}</p>
+      <div class="section"><h2>Forbidden claims</h2>
+        <p class="fact-caption">Read-only. Editing forbidden claims is out of this surface — too easy to weaken.</p>
+        <ul class="readonly-list">${claims}</ul>
+      </div>`;
+  }
+
+  function renderProjectsTab(draft) {
+    const projects = draft.projects || [];
+    const certs = draft.certifications || [];
+    const cards = projects.length
+      ? projects
+          .map((p, i) => {
+            const bullets = (p.bullets || [])
+              .map(
+                (b, bi) => `<div class="scope-row">${textarea("", b, `data-path="projects.${i}.bullets.${bi}"`)}${Btn("Remove", { variant: "ghost", attrs: `data-remove-path="projects.${i}.bullets.${bi}"` })}</div>`
+              )
+              .join("");
+            return `<article class="fact-card">
+              <div class="fact-card-head">
+                <h2>${esc(p.name || "New project")}</h2>
+                ${p.id ? CopyId(p.id) : ""}
+              </div>
+              <p class="fact-caption">Personal-project scope. Never describe as professional production experience.</p>
+              <div class="form-grid">
+                ${FormField("Name", input("", p.name || "", `data-path="projects.${i}.name"`))}
+                ${FormField("Note", input("", p.note || "", `data-path="projects.${i}.note"`))}
+                ${FormField("Bullets", `<div data-primitive="ScopeFactsEditor">${bullets}${Btn("Add bullet", { variant: "ghost", attrs: `data-add-path="projects.${i}.bullets"` })}</div>`, { span2: true })}
+              </div>
+              <div class="fact-actions">
+                ${Btn("Save project", { variant: "primary", attrs: `data-save-project="${i}"` })}
+                ${p.id ? CommandHint(`hunt projects update ${p.id} --json`) : ""}
+              </div>
+            </article>`;
+          })
+          .join("")
+      : EmptyState("No projects yet", "Personal labs belong here, not in employment history.", Btn("Add project", { attrs: "data-add-project" }));
+    const certRows = rowList("certifications", certs, [
+      { key: "name", placeholder: "Certification" },
+      { key: "year", placeholder: "Year" },
+    ], "Add certification");
+    return `${cards}<p>${Btn("Add project", { attrs: "data-add-project" })}</p>
+      <div class="section">
+        <h2>Certifications</h2>
+        ${certRows}
+        <div class="form-actions">${Btn("Save certifications", { variant: "primary", attrs: "data-save-certifications" })}</div>
+      </div>`;
+  }
+
+  async function loadKnowledge() {
+    const [profile, positions, achievements, skills, projects, integrity] = await Promise.all([
+      api("/api/profile"),
+      api("/api/positions"),
+      api("/api/achievements"),
+      api("/api/skills"),
+      api("/api/projects"),
+      api("/api/integrity"),
+    ]);
+    const server = {
+      profile: profile.profile || {},
+      positions: positions.positions || [],
+      achievements: achievements.achievements || [],
+      skills: skills.skills || {},
+      projects: projects.projects || [],
+      certifications: projects.certifications || [],
+      integrity: integrity.integrity || {},
+    };
+    for (const a of server.achievements) {
+      a.tagsText = (a.tags || []).join(", ");
+    }
+    state.knowledge = {
+      server: clone(server),
+      draft: clone(server),
+      revisions: {
+        profile: profile.revision,
+        positions: positions.revision,
+        achievements: achievements.revision,
+        skills: skills.revision,
+        projects: projects.revision,
+        integrity: integrity.revision,
+      },
+    };
+  }
+
+  async function renderProfile(root, badges) {
+    const loading =
+      profileHeader({ profile: { name: state.meta && state.meta.profile_name, headlines: {} }, positions: [], achievements: [] }, CommandHint("hunt profile get --json")) +
+      `<div class="profile-page">${LoadingSkeleton(3)}</div>`;
+    if (!state.knowledge) {
+      root.innerHTML = shell("profile", badges, loading);
+      try {
+        await loadKnowledge();
+      } catch (err) {
+        const emptyKb = /knowledge/i.test(err.message || "");
+        root.innerHTML = shell(
+          "profile",
+          badges,
+          emptyKb
+            ? EmptyState("No profile yet", "Copy example-workspace and replace Jane Doe.", "")
+            : ErrorBanner(err.message)
+        );
+        return;
+      }
+    }
+    const draft = state.knowledge.draft;
+    const tab = state.route.tab || "positions";
+    const cli =
+      tab === "profile"
+        ? "hunt profile get --json"
+        : tab === "positions"
+          ? "hunt positions list --json"
+          : tab === "achievements"
+            ? "hunt achievements list --json"
+            : tab === "skills"
+              ? "hunt skills get --json"
+              : tab === "projects"
+                ? "hunt projects list --json"
+                : "hunt integrity get --json";
+    let tabBody;
+    if (tab === "profile") tabBody = renderProfileTab(draft);
+    else if (tab === "positions") tabBody = renderPositionsTab(draft);
+    else if (tab === "achievements") tabBody = renderAchievementsTab(draft);
+    else if (tab === "skills") tabBody = renderSkillsTab(draft);
+    else if (tab === "projects") tabBody = renderProjectsTab(draft);
+    else tabBody = IntegrityPanel(draft.integrity || {});
+    const sticky = `<div class="sticky-save${state.profileDirty ? " is-dirty" : ""}">${Btn("Save", { variant: "primary", attrs: "data-save-profile-tab" })}</div>`;
+    root.innerHTML = shell(
+      "profile",
+      badges,
+      profileHeader(draft, CommandHint(cli)) + knowledgeConflictHtml() + `<div class="profile-page">${tabBody}</div>` + sticky
+    );
+  }
+
+  function isConflict(err) {
+    return Boolean(err && err.status === 409);
+  }
+
+  async function noteConflict(err, localObj) {
+    const kept = state.knowledge ? clone(state.knowledge.draft) : null;
+    const keptRev = state.knowledge ? Object.assign({}, state.knowledge.revisions) : null;
+    let server = "";
+    try {
+      const [profile, positions, achievements, skills, projects, integrity] = await Promise.all([
+        api("/api/profile"),
+        api("/api/positions"),
+        api("/api/achievements"),
+        api("/api/skills"),
+        api("/api/projects"),
+        api("/api/integrity"),
+      ]);
+      server = JSON.stringify(
+        {
+          profile: profile.profile,
+          positions: positions.positions,
+          achievements: achievements.achievements,
+          skills: skills.skills,
+          projects: projects.projects,
+          certifications: projects.certifications,
+        },
+        null,
+        2
+      );
+      state.knowledge.server = {
+        profile: profile.profile || {},
+        positions: positions.positions || [],
+        achievements: achievements.achievements || [],
+        skills: skills.skills || {},
+        projects: projects.projects || [],
+        certifications: projects.certifications || [],
+        integrity: integrity.integrity || {},
+      };
+      if (kept) state.knowledge.draft = kept;
+      if (keptRev) state.knowledge.revisions = keptRev;
+    } catch {
+      /* keep local draft */
+    }
+    state.profileConflict = {
+      message: (err.data && err.data.error) || err.message || "This fact changed elsewhere. Your draft is not saved.",
+      local: typeof localObj === "string" ? localObj : JSON.stringify(localObj, null, 2),
+      server,
+      showDiff: false,
+    };
+  }
+
+  async function saveProfile() {
+    const p = state.knowledge.draft.profile;
+    const body = {
+      name: p.name,
+      headlines: p.headlines,
+      location: p.location,
+      citizenship: p.citizenship,
+      languages: p.languages || [],
+      contact: p.contact || {},
+      education: p.education || [],
+    };
+    try {
+      const res = await api("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+        ifMatch: state.knowledge.revisions.profile,
+      });
+      state.knowledge.revisions.profile = res.revision;
+      state.knowledge.server.profile = clone(res.profile);
+      state.knowledge.draft.profile = clone(res.profile);
+      state.profileDirty = false;
+      showToast("Saved");
+    } catch (err) {
+      if (isConflict(err)) await noteConflict(err, body);
+      else alert(err.message);
+      render();
+    }
+  }
+
+  function positionPayload(p) {
+    const body = {
+      title: p.title,
+      employer: p.employer,
+      location: p.location,
+      start: p.start,
+      end: p.end || "present",
+      scope_facts: p.scope_facts || [],
+      default_achievements: p.default_achievements || [],
+    };
+    if (p.client) body.client = p.client;
+    return body;
+  }
+
+  async function savePosition(idx) {
+    const p = state.knowledge.draft.positions[idx];
+    if (!p) return;
+    if (!String(p.employer || "").trim() || !String(p.title || "").trim() || !String(p.start || "").trim()) {
+      alert("Position needs title, employer, and start.");
+      return;
+    }
+    const body = positionPayload(p);
+    try {
+      let res;
+      if (!p.id) {
+        res = await api("/api/positions", {
+          method: "POST",
+          body: JSON.stringify(body),
+          ifMatch: state.knowledge.revisions.positions,
+        });
+        state.knowledge.draft.positions[idx] = clone(res.position);
+      } else {
+        res = await api(`/api/positions/${encodeURIComponent(p.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+          ifMatch: state.knowledge.revisions.positions,
+        });
+        state.knowledge.draft.positions[idx] = Object.assign(p, res.position);
+      }
+      state.knowledge.revisions.positions = res.revision;
+      state.profileDirty = false;
+      showToast("Saved");
+    } catch (err) {
+      if (isConflict(err)) await noteConflict(err, body);
+      else alert(err.message);
+      render();
+    }
+  }
+
+  async function saveAchievement(idx) {
+    const a = state.knowledge.draft.achievements[idx];
+    if (!a) return;
+    const tags = splitTags(a.tagsText != null ? a.tagsText : (a.tags || []).join(", "));
+    const body = { text: a.text, tags, evidence: a.evidence };
+    try {
+      let res;
+      if (!a.id) {
+        if (!body.text || !body.evidence) {
+          alert("Achievement needs text and evidence.");
+          return;
+        }
+        res = await api("/api/achievements", {
+          method: "POST",
+          body: JSON.stringify(body),
+          ifMatch: state.knowledge.revisions.achievements,
+        });
+        const row = clone(res.achievement);
+        row.tagsText = (row.tags || []).join(", ");
+        state.knowledge.draft.achievements[idx] = row;
+      } else {
+        res = await api(`/api/achievements/${encodeURIComponent(a.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+          ifMatch: state.knowledge.revisions.achievements,
+        });
+        Object.assign(a, res.achievement);
+        a.tagsText = (a.tags || []).join(", ");
+      }
+      state.knowledge.revisions.achievements = res.revision;
+      state.profileDirty = false;
+      showToast("Saved");
+    } catch (err) {
+      if (isConflict(err)) await noteConflict(err, body);
+      else alert(err.message);
+      render();
+    }
+  }
+
+  function splitTags(text) {
+    return String(text || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  async function saveSkills() {
+    const groups = state.knowledge.draft.skills.skill_groups || [];
+    const body = { skill_groups: groups };
+    try {
+      const res = await api("/api/skills", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+        ifMatch: state.knowledge.revisions.skills,
+      });
+      state.knowledge.revisions.skills = res.revision;
+      state.knowledge.draft.skills = clone(res.skills);
+      state.profileDirty = false;
+      showToast("Saved");
+    } catch (err) {
+      if (isConflict(err)) await noteConflict(err, body);
+      else alert(err.message);
+      render();
+    }
+  }
+
+  async function saveProject(idx) {
+    const p = state.knowledge.draft.projects[idx];
+    if (!p) return;
+    const body = { name: p.name, bullets: p.bullets || [] };
+    if (p.note) body.note = p.note;
+    try {
+      let res;
+      if (!p.id) {
+        if (!body.name) {
+          alert("Project needs a name.");
+          return;
+        }
+        res = await api("/api/projects", {
+          method: "POST",
+          body: JSON.stringify(body),
+          ifMatch: state.knowledge.revisions.projects,
+        });
+        state.knowledge.draft.projects[idx] = clone(res.project);
+      } else {
+        res = await api(`/api/projects/${encodeURIComponent(p.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+          ifMatch: state.knowledge.revisions.projects,
+        });
+        Object.assign(p, res.project);
+      }
+      state.knowledge.revisions.projects = res.revision;
+      state.profileDirty = false;
+      showToast("Saved");
+    } catch (err) {
+      if (isConflict(err)) await noteConflict(err, body);
+      else alert(err.message);
+      render();
+    }
+  }
+
+  async function saveCertifications() {
+    const body = { certifications: state.knowledge.draft.certifications || [] };
+    try {
+      const res = await api("/api/certifications", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+        ifMatch: state.knowledge.revisions.projects,
+      });
+      state.knowledge.revisions.projects = res.revision;
+      state.knowledge.draft.certifications = clone(res.certifications || []);
+      state.profileDirty = false;
+      showToast("Saved");
+    } catch (err) {
+      if (isConflict(err)) await noteConflict(err, body);
+      else alert(err.message);
+      render();
+    }
+  }
+
+  async function saveCurrentProfileTab() {
+    const tab = state.route.tab;
+    if (tab === "profile") return saveProfile();
+    if (tab === "positions") {
+      for (let i = 0; i < (state.knowledge.draft.positions || []).length; i++) {
+        await savePosition(i);
+      }
+      return;
+    }
+    if (tab === "achievements") {
+      for (let i = 0; i < (state.knowledge.draft.achievements || []).length; i++) {
+        await saveAchievement(i);
+      }
+      return;
+    }
+    if (tab === "skills") return saveSkills();
+    if (tab === "projects") {
+      for (let i = 0; i < (state.knowledge.draft.projects || []).length; i++) {
+        await saveProject(i);
+      }
+      await saveCertifications();
+    }
+  }
+
+  function emptyForPath(path) {
+    if (path.endsWith(".languages")) return { name: "", level: "" };
+    if (path.endsWith(".education")) return { degree: "", institution: "", year: "" };
+    if (path === "certifications" || path.endsWith(".certifications")) return { name: "", year: "" };
+    return "";
+  }
+
+  function addAtPath(path, value) {
+    const parts = path.split(".");
+    let cur = state.knowledge.draft;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (cur[parts[i]] == null) cur[parts[i]] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+      cur = cur[parts[i]];
+    }
+    const last = parts[parts.length - 1];
+    if (!Array.isArray(cur[last])) cur[last] = [];
+    cur[last].push(value);
+  }
+
+  function removeAtPath(path) {
+    const parts = path.split(".");
+    const idx = Number(parts.pop());
+    let cur = state.knowledge.draft;
+    for (const part of parts) cur = cur[part];
+    if (Array.isArray(cur)) cur.splice(idx, 1);
+  }
+
   async function badges() {
     const out = { board: 0, inbox: 0, sources: 0, jobs: 0 };
     try {
@@ -922,6 +1741,11 @@
     state.route = parseRoute();
     if (prev.name !== state.route.name || prev.id !== state.route.id) {
       state.quotedDirty = false;
+    }
+    if (prev.name === "profile" && state.route.name !== "profile") {
+      state.profileDirty = false;
+      state.knowledge = null;
+      state.profileConflict = null;
     }
     try {
       state.meta = await api("/api/meta");
@@ -948,6 +1772,7 @@
       if (r.name === "inbox") return await renderInbox(root, b);
       if (r.name === "sources") return await renderSources(root, b);
       if (r.name === "jobs") return await renderJobs(root, b);
+      if (r.name === "profile") return await renderProfile(root, b);
       root.innerHTML = shell(
         "board",
         b,
@@ -1168,6 +1993,184 @@
       const form = document.getElementById("quoted-form");
       if (form) form.requestSubmit();
     }
+    if (ev.target.closest("[data-save-profile-tab]")) {
+      await saveCurrentProfileTab();
+      return;
+    }
+    if (ev.target.closest("[data-conflict-reload]")) {
+      state.profileConflict = null;
+      state.profileDirty = false;
+      state.knowledge = null;
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-conflict-diff]")) {
+      if (state.profileConflict) state.profileConflict.showDiff = true;
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-conflict-cancel]")) {
+      state.profileConflict = null;
+      render();
+      return;
+    }
+    const addPath = ev.target.closest("[data-add-path]");
+    if (addPath && state.knowledge) {
+      const path = addPath.getAttribute("data-add-path");
+      addAtPath(path, emptyForPath(path));
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    const removePath = ev.target.closest("[data-remove-path]");
+    if (removePath && state.knowledge) {
+      removeAtPath(removePath.getAttribute("data-remove-path"));
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-add-position]") && state.knowledge) {
+      state.knowledge.draft.positions = state.knowledge.draft.positions || [];
+      state.knowledge.draft.positions.unshift({
+        id: "",
+        title: "",
+        employer: "",
+        location: "",
+        start: "",
+        end: "present",
+        scope_facts: [],
+        default_achievements: [],
+        verified: false,
+      });
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-add-achievement-row]") && state.knowledge) {
+      state.knowledge.draft.achievements = state.knowledge.draft.achievements || [];
+      state.knowledge.draft.achievements.push({
+        id: "",
+        text: "",
+        tags: [],
+        tagsText: "",
+        evidence: "",
+        verified: false,
+      });
+      state.profileDirty = true;
+      go("/profile?tab=achievements");
+      return;
+    }
+    if (ev.target.closest("[data-add-project]") && state.knowledge) {
+      state.knowledge.draft.projects = state.knowledge.draft.projects || [];
+      state.knowledge.draft.projects.push({ id: "", name: "", bullets: [""], note: "" });
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    if (ev.target.closest("[data-add-skill-group]") && state.knowledge) {
+      const skills = state.knowledge.draft.skills || (state.knowledge.draft.skills = {});
+      skills.skill_groups = skills.skill_groups || [];
+      skills.skill_groups.push({ name: "", skills: [] });
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    const addSkill = ev.target.closest("[data-add-skill]");
+    if (addSkill && state.knowledge) {
+      const gi = Number(addSkill.getAttribute("data-add-skill"));
+      const groups = state.knowledge.draft.skills.skill_groups || [];
+      groups[gi].skills = groups[gi].skills || [];
+      groups[gi].skills.push({ name: "", level: "working", employer_scope: "" });
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    const savePos = ev.target.closest("[data-save-position]");
+    if (savePos) {
+      await savePosition(Number(savePos.getAttribute("data-save-position")));
+      return;
+    }
+    const saveAch = ev.target.closest("[data-save-achievement]");
+    if (saveAch) {
+      await saveAchievement(Number(saveAch.getAttribute("data-save-achievement")));
+      return;
+    }
+    const saveProj = ev.target.closest("[data-save-project]");
+    if (saveProj) {
+      await saveProject(Number(saveProj.getAttribute("data-save-project")));
+      return;
+    }
+    if (ev.target.closest("[data-save-skills]")) {
+      await saveSkills();
+      return;
+    }
+    if (ev.target.closest("[data-save-certifications]")) {
+      await saveCertifications();
+      return;
+    }
+    const openConfirm = ev.target.closest("[data-open-confirm]");
+    if (openConfirm) {
+      const [kindTarget, id] = (openConfirm.getAttribute("data-open-confirm") || "").split(":");
+      if (!id) return;
+      state.dialog = { kind: "confirm-verify", kindTarget, id };
+      render();
+      return;
+    }
+    const confirmVerify = ev.target.closest("[data-confirm-verify]");
+    if (confirmVerify) {
+      const raw = confirmVerify.getAttribute("data-confirm-verify") || "";
+      const splitAt = raw.indexOf(":");
+      const kindTarget = raw.slice(0, splitAt);
+      const id = raw.slice(splitAt + 1);
+      state.dialog = null;
+      const file = kindTarget === "position" ? "positions" : "achievements";
+      try {
+        const res = await api(`/api/${file}/${encodeURIComponent(id)}/confirm`, {
+          method: "POST",
+          ifMatch: state.knowledge.revisions[file],
+        });
+        state.knowledge.revisions[file] = res.revision;
+        const key = kindTarget === "position" ? "position" : "achievement";
+        const listKey = file;
+        const row = res[key];
+        const list = state.knowledge.draft[listKey] || [];
+        const idx = list.findIndex((item) => item.id === id);
+        if (idx >= 0) {
+          if (kindTarget === "achievement") row.tagsText = (row.tags || []).join(", ");
+          list[idx] = Object.assign(list[idx], row);
+        }
+        showToast("Confirmed");
+      } catch (err) {
+        if (isConflict(err)) await noteConflict(err, { id, confirm: true });
+        else alert(err.message);
+      }
+      render();
+      return;
+    }
+    const unverify = ev.target.closest("[data-unverify]");
+    if (unverify) {
+      const raw = unverify.getAttribute("data-unverify") || "";
+      const [kindTarget, id] = raw.split(":");
+      if (!id) return;
+      const file = kindTarget === "position" ? "positions" : "achievements";
+      try {
+        const res = await api(`/api/${file}/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ verified: false }),
+          ifMatch: state.knowledge.revisions[file],
+        });
+        state.knowledge.revisions[file] = res.revision;
+        const key = kindTarget === "position" ? "position" : "achievement";
+        const list = state.knowledge.draft[file] || [];
+        const idx = list.findIndex((item) => item.id === id);
+        if (idx >= 0) Object.assign(list[idx], res[key]);
+        showToast("Marked as draft");
+      } catch (err) {
+        if (isConflict(err)) await noteConflict(err, { id, verified: false });
+        else alert(err.message);
+      }
+      render();
+    }
   });
 
   document.addEventListener("submit", async (ev) => {
@@ -1237,6 +2240,11 @@
       } catch (err) {
         alert(err.message);
       }
+      return;
+    }
+    if (form.id === "profile-form") {
+      ev.preventDefault();
+      await saveProfile();
     }
   });
 
@@ -1255,6 +2263,32 @@
       if (save) save.classList.add("is-dirty");
       const shellEl = document.querySelector("[data-primitive=AppShell]");
       if (shellEl) shellEl.classList.add("quoted-dirty");
+    }
+    if (ev.target.matches("[data-present-index]") && state.knowledge) {
+      const idx = Number(ev.target.getAttribute("data-present-index"));
+      const pos = state.knowledge.draft.positions[idx];
+      if (pos) pos.end = ev.target.checked ? "present" : "";
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    const addAch = ev.target.closest("[data-add-achievement]");
+    if (addAch && addAch.value && state.knowledge) {
+      const idx = Number(addAch.getAttribute("data-add-achievement"));
+      const pos = state.knowledge.draft.positions[idx];
+      pos.default_achievements = pos.default_achievements || [];
+      if (!pos.default_achievements.includes(addAch.value)) pos.default_achievements.push(addAch.value);
+      state.profileDirty = true;
+      render();
+      return;
+    }
+    if (ev.target.hasAttribute("data-path") && state.knowledge) {
+      setPath(state.knowledge.draft, ev.target.getAttribute("data-path"), ev.target.value);
+      state.profileDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("profile-dirty");
     }
     if (ev.target.id === "status-select") {
       const value = ev.target.value;
@@ -1291,6 +2325,14 @@
       const shellEl = document.querySelector("[data-primitive=AppShell]");
       if (shellEl) shellEl.classList.add("quoted-dirty");
     }
+    if (ev.target.hasAttribute("data-path") && state.knowledge) {
+      setPath(state.knowledge.draft, ev.target.getAttribute("data-path"), ev.target.value);
+      state.profileDirty = true;
+      const save = document.querySelector(".sticky-save");
+      if (save) save.classList.add("is-dirty");
+      const shellEl = document.querySelector("[data-primitive=AppShell]");
+      if (shellEl) shellEl.classList.add("profile-dirty");
+    }
   });
 
   document.addEventListener("keydown", (ev) => {
@@ -1326,6 +2368,7 @@
       if (ev.key === "i") go("/inbox");
       if (ev.key === "s") go("/sources");
       if (ev.key === "j") go("/jobs");
+      if (ev.key === "p") go("/profile");
       return;
     }
     if (ev.key === "n" && state.route.name === "board") {

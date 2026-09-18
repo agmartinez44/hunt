@@ -13,6 +13,7 @@ Honesty:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import date, datetime
 from pathlib import Path
@@ -21,7 +22,7 @@ from typing import Any
 import yaml
 
 from hunt.core.context import actor
-from hunt.core.errors import NotFoundError, ValidationError
+from hunt.core.errors import ConflictError, NotFoundError, ValidationError
 from hunt.core.workspace import Workspace, WorkspaceError
 
 ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -80,6 +81,26 @@ def _path(ws: Workspace, name: str) -> Path:
     if not path.is_file():
         raise WorkspaceError(f"knowledge file missing: {path}")
     return path
+
+
+def file_revision(ws: Workspace, name: str) -> str:
+    """Coarse etag for a knowledge YAML file (sha256 prefix)."""
+    digest = hashlib.sha256(_path(ws, name).read_bytes()).hexdigest()
+    return digest[:16]
+
+
+def require_revision(ws: Workspace, name: str, if_match: str | None) -> str:
+    """Reject a write when If-Match does not equal the current file revision."""
+    current = file_revision(ws, name)
+    if not if_match:
+        return current
+    want = str(if_match).strip().strip('"')
+    if want != current:
+        raise ConflictError(
+            "This fact changed elsewhere. Your draft is not saved.",
+            revision=current,
+        )
+    return current
 
 
 def _jsonable(value: Any) -> Any:

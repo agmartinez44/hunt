@@ -24,14 +24,21 @@ from hunt.core.applications import (
 )
 from hunt.core.artifacts import add_file, list_artifacts
 from hunt.core.context import current_actor
-from hunt.core.errors import HuntError, NotFoundError, ValidationError
+from hunt.core.errors import ConflictError, HuntError, NotFoundError, ValidationError
 from hunt.core.events import list_events
 from hunt.core.facts import (
+    ACHIEVEMENTS_FILE,
+    INTEGRITY_FILE,
+    POSITIONS_FILE,
+    PROFILE_FILE,
+    PROJECTS_FILE,
+    SKILLS_FILE,
     confirm_achievement,
     confirm_position,
     create_achievement,
     create_position,
     create_project,
+    file_revision,
     get_achievement,
     get_integrity,
     get_position,
@@ -41,7 +48,9 @@ from hunt.core.facts import (
     list_achievements,
     list_positions,
     list_projects,
+    require_revision,
     update_achievement,
+    update_certifications,
     update_integrity,
     update_position,
     update_profile,
@@ -159,6 +168,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.exception_handler(ValidationError)
     async def _validation(_request: Request, exc: ValidationError) -> JSONResponse:
         return _error(400, str(exc))
+
+    @app.exception_handler(ConflictError)
+    async def _conflict(_request: Request, exc: ConflictError) -> JSONResponse:
+        body: dict[str, Any] = {"error": str(exc)}
+        if exc.revision:
+            body["revision"] = exc.revision
+        return JSONResponse(body, status_code=409)
 
     @app.exception_handler(WorkspaceError)
     async def _workspace(_request: Request, exc: WorkspaceError) -> JSONResponse:
@@ -380,10 +396,19 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             raise ValidationError("expected a JSON object")
         return body
 
+    def _if_match(request: Request) -> str | None:
+        raw = request.headers.get("if-match")
+        if not raw:
+            return None
+        return raw.strip().strip('"')
+
+    def _rev(ws: Workspace, name: str) -> str:
+        return file_revision(ws, name)
+
     @app.get("/api/profile")
     def api_get_profile(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"profile": get_profile(ws)}
+            return {"profile": get_profile(ws), "revision": _rev(ws, PROFILE_FILE)}
 
     @app.patch("/api/profile")
     async def api_update_profile(
@@ -391,12 +416,17 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"profile": update_profile(ws, body)}
+            require_revision(ws, PROFILE_FILE, _if_match(request))
+            profile = update_profile(ws, body)
+            return {"profile": profile, "revision": _rev(ws, PROFILE_FILE)}
 
     @app.get("/api/positions")
     def api_list_positions(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"positions": list_positions(ws)}
+            return {
+                "positions": list_positions(ws),
+                "revision": _rev(ws, POSITIONS_FILE),
+            }
 
     @app.post("/api/positions")
     async def api_create_position(
@@ -404,14 +434,19 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"position": create_position(ws, body)}
+            require_revision(ws, POSITIONS_FILE, _if_match(request))
+            position = create_position(ws, body)
+            return {"position": position, "revision": _rev(ws, POSITIONS_FILE)}
 
     @app.get("/api/positions/{position_id}")
     def api_get_position(
         position_id: str, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"position": get_position(ws, position_id)}
+            return {
+                "position": get_position(ws, position_id),
+                "revision": _rev(ws, POSITIONS_FILE),
+            }
 
     @app.patch("/api/positions/{position_id}")
     async def api_update_position(
@@ -419,19 +454,26 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"position": update_position(ws, position_id, body)}
+            require_revision(ws, POSITIONS_FILE, _if_match(request))
+            position = update_position(ws, position_id, body)
+            return {"position": position, "revision": _rev(ws, POSITIONS_FILE)}
 
     @app.post("/api/positions/{position_id}/confirm")
-    def api_confirm_position(
-        position_id: str, _: None = Depends(require_auth)
+    async def api_confirm_position(
+        position_id: str, request: Request, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"position": confirm_position(ws, position_id)}
+            require_revision(ws, POSITIONS_FILE, _if_match(request))
+            position = confirm_position(ws, position_id)
+            return {"position": position, "revision": _rev(ws, POSITIONS_FILE)}
 
     @app.get("/api/achievements")
     def api_list_achievements(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"achievements": list_achievements(ws)}
+            return {
+                "achievements": list_achievements(ws),
+                "revision": _rev(ws, ACHIEVEMENTS_FILE),
+            }
 
     @app.post("/api/achievements")
     async def api_create_achievement(
@@ -439,14 +481,22 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"achievement": create_achievement(ws, body)}
+            require_revision(ws, ACHIEVEMENTS_FILE, _if_match(request))
+            achievement = create_achievement(ws, body)
+            return {
+                "achievement": achievement,
+                "revision": _rev(ws, ACHIEVEMENTS_FILE),
+            }
 
     @app.get("/api/achievements/{achievement_id}")
     def api_get_achievement(
         achievement_id: str, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"achievement": get_achievement(ws, achievement_id)}
+            return {
+                "achievement": get_achievement(ws, achievement_id),
+                "revision": _rev(ws, ACHIEVEMENTS_FILE),
+            }
 
     @app.patch("/api/achievements/{achievement_id}")
     async def api_update_achievement(
@@ -454,19 +504,31 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"achievement": update_achievement(ws, achievement_id, body)}
+            require_revision(ws, ACHIEVEMENTS_FILE, _if_match(request))
+            achievement = update_achievement(ws, achievement_id, body)
+            return {
+                "achievement": achievement,
+                "revision": _rev(ws, ACHIEVEMENTS_FILE),
+            }
 
     @app.post("/api/achievements/{achievement_id}/confirm")
-    def api_confirm_achievement(
-        achievement_id: str, _: None = Depends(require_auth)
+    async def api_confirm_achievement(
+        achievement_id: str, request: Request, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"achievement": confirm_achievement(ws, achievement_id)}
+            require_revision(ws, ACHIEVEMENTS_FILE, _if_match(request))
+            achievement = confirm_achievement(ws, achievement_id)
+            return {
+                "achievement": achievement,
+                "revision": _rev(ws, ACHIEVEMENTS_FILE),
+            }
 
     @app.get("/api/projects")
     def api_list_projects(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            return list_projects(ws)
+            payload = list_projects(ws)
+            payload["revision"] = _rev(ws, PROJECTS_FILE)
+            return payload
 
     @app.post("/api/projects")
     async def api_create_project(
@@ -474,14 +536,19 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"project": create_project(ws, body)}
+            require_revision(ws, PROJECTS_FILE, _if_match(request))
+            project = create_project(ws, body)
+            return {"project": project, "revision": _rev(ws, PROJECTS_FILE)}
 
     @app.get("/api/projects/{project_id}")
     def api_get_project(
         project_id: str, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"project": get_project(ws, project_id)}
+            return {
+                "project": get_project(ws, project_id),
+                "revision": _rev(ws, PROJECTS_FILE),
+            }
 
     @app.patch("/api/projects/{project_id}")
     async def api_update_project(
@@ -489,12 +556,28 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"project": update_project(ws, project_id, body)}
+            require_revision(ws, PROJECTS_FILE, _if_match(request))
+            project = update_project(ws, project_id, body)
+            return {"project": project, "revision": _rev(ws, PROJECTS_FILE)}
+
+    @app.patch("/api/certifications")
+    async def api_update_certifications(
+        request: Request, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        body = _json_object(await request.json())
+        certs = body.get("certifications")
+        if not isinstance(certs, list):
+            raise ValidationError("certifications must be a list")
+        with open_ws() as ws:
+            require_revision(ws, PROJECTS_FILE, _if_match(request))
+            payload = update_certifications(ws, certs)
+            payload["revision"] = _rev(ws, PROJECTS_FILE)
+            return payload
 
     @app.get("/api/skills")
     def api_get_skills(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"skills": get_skills(ws)}
+            return {"skills": get_skills(ws), "revision": _rev(ws, SKILLS_FILE)}
 
     @app.patch("/api/skills")
     async def api_update_skills(
@@ -502,12 +585,17 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"skills": update_skills(ws, body)}
+            require_revision(ws, SKILLS_FILE, _if_match(request))
+            skills = update_skills(ws, body)
+            return {"skills": skills, "revision": _rev(ws, SKILLS_FILE)}
 
     @app.get("/api/integrity")
     def api_get_integrity(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            return {"integrity": get_integrity(ws)}
+            return {
+                "integrity": get_integrity(ws),
+                "revision": _rev(ws, INTEGRITY_FILE),
+            }
 
     @app.patch("/api/integrity")
     async def api_update_integrity(
@@ -515,7 +603,9 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         body = _json_object(await request.json())
         with open_ws() as ws:
-            return {"integrity": update_integrity(ws, body)}
+            require_revision(ws, INTEGRITY_FILE, _if_match(request))
+            integrity = update_integrity(ws, body)
+            return {"integrity": integrity, "revision": _rev(ws, INTEGRITY_FILE)}
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
