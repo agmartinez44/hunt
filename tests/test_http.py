@@ -279,6 +279,56 @@ def test_ui_visual_followup_mira_agu7():
     assert "font-size: var(--text-xs)" in css.split('[data-primitive="CountBadge"]')[1][:400]
     assert "skel-chrome" in js
     assert "BOARD_COLS" in js
+    assert "FloorBadge" not in js
+    assert "<th>Floor</th>" not in js
+    assert 'BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"]' in js
+    assert 'data-primitive="NetEstimate"' in js
+    assert "${esc(money(derived.net_month))} ${esc(derived.display_currency)} /mo" in js
+
+
+def test_ui_polish_net_estimate_and_plex():
+    """AGU-15 / AGU-11 §8: Plex, tokens, NetEstimate; floor leaves the human UI."""
+    static = ROOT / "hunt" / "http" / "static"
+    js = (static / "app.js").read_text()
+    css = (static / "hunt.css").read_text()
+    html = (static / "index.html").read_text()
+    blob = js + css + html
+    fonts = static / "fonts"
+    assert (fonts / "ibm-plex-sans-regular.woff2").is_file()
+    assert (fonts / "ibm-plex-sans-semibold.woff2").is_file()
+    assert (fonts / "ibm-plex-mono-regular.woff2").is_file()
+    for name in (
+        "ibm-plex-sans-regular.woff2",
+        "ibm-plex-sans-semibold.woff2",
+        "ibm-plex-mono-regular.woff2",
+    ):
+        assert (fonts / name).read_bytes()[:4] == b"wOF2"
+    assert "@font-face" in css
+    assert 'url("/static/fonts/ibm-plex-sans-regular.woff2")' in css
+    assert 'url("/static/fonts/ibm-plex-sans-semibold.woff2")' in css
+    assert 'url("/static/fonts/ibm-plex-mono-regular.woff2")' in css
+    assert "font-size: 100%" in css
+    assert "--text-lg: 18px" in css
+    assert "--radius-1: 4px" in css
+    assert "--radius-2: 8px" in css
+    assert "--radius-pill: 999px" in css
+    assert "--shadow-1:" in css
+    assert "--shadow-2:" in css
+    assert 'data-primitive="NetEstimate"' in js
+    assert "function NetEstimate" in js
+    assert 'id="create-form" class="form-grid"' in js
+    assert '<div class="section">' in js
+    assert "inbox-actions" in js
+    assert "Add a tax home to estimate net." in js
+    assert 'data-primitive="FloorBadge"' not in blob
+    assert "below floor" not in blob.lower()
+    assert "clears_floor" not in blob
+    assert "<th>Floor</th>" not in js
+    assert ".floor-clears" not in css
+    assert ".floor-below" not in css
+    assert ".floor-unknown" not in css
+    assert "FloorBadge" not in blob
+    assert "net ${esc(money(d.net_month))}" not in js
 
 
 def test_spa_and_meta(client):

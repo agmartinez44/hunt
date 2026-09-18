@@ -32,7 +32,7 @@ include = ["hunt*"]
 
 [tool.setuptools.package-data]
 "hunt.cv" = ["template/*.j2"]
-"hunt.http" = ["static/*"]
+"hunt.http" = ["static/*", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

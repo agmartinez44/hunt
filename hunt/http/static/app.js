@@ -22,7 +22,7 @@
   const JOB_TYPES = ["source-poll", "screen-inbox", "tailor-cv"];
   const JOB_STATES = ["queued", "running", "done", "failed"];
   const TOKEN_KEY = "hunt_token";
-  const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Floor", "Updated", "Id"];
+  const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"];
   const INBOX_COLS = ["Company", "Title", "Source", "Pay", "Why keep", "Why risk", "Knockouts", "Age", "Actions", "Id"];
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
   const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
@@ -208,18 +208,26 @@
       return `<div data-primitive="PayDerived"><span class="caption">Derived unavailable</span>No FX stamp — conversions hidden.</div>`;
     }
     return `<div data-primitive="PayDerived"><span class="caption">Derived · FX ${esc(d.fx_as_of)} · ${esc(d.display_currency)}</span>
-      ${esc(money(d.hour))} /h · ${esc(money(d.day))} /d · ${esc(money(d.month))} /mo · ${esc(money(d.year))} /yr
-      ${d.net_month != null ? ` · net ${esc(money(d.net_month))} /mo` : ""}</div>`;
+      ${esc(money(d.hour))} /h · ${esc(money(d.day))} /d · ${esc(money(d.month))} /mo · ${esc(money(d.year))} /yr</div>`;
   }
 
-  function FloorBadge(derived) {
-    if (!derived || derived.clears_floor == null) {
-      return `<span data-primitive="FloorBadge" class="floor-unknown">pay unknown</span>`;
+  function NetEstimate(derived, { empty = "net —", taxHome = "", detail = false } = {}) {
+    if (!derived || !derived.fx_as_of || derived.net_month == null) {
+      const body = detail
+        ? `<span class="help">Add a tax home to estimate net.</span>`
+        : `<span class="placeholder">${esc(empty)}</span>`;
+      return `<span data-primitive="NetEstimate" class="is-empty"><span class="caption">Net /mo</span>${body}</span>`;
     }
-    if (derived.clears_floor) {
-      return `<span data-primitive="FloorBadge" class="floor-clears">clears</span>`;
+    const caption = detail
+      ? `Net /mo · ${derived.display_currency}`
+      : "Net /mo";
+    let html = `<span data-primitive="NetEstimate"><span class="caption">${esc(caption)}</span><strong>${esc(money(derived.net_month))} ${esc(derived.display_currency)} /mo</strong>`;
+    if (detail) {
+      const tax = taxHome ? ` · tax home ${esc(taxHome)}` : "";
+      html += `<span class="caption net-meta">FX ${esc(derived.fx_as_of)}${tax}</span>`;
     }
-    return `<span data-primitive="FloorBadge" class="floor-below">below floor</span>`;
+    html += `</span>`;
+    return html;
   }
 
   function EmptyState(title, body, actionsHtml = "") {
@@ -322,7 +330,7 @@
       <p class="muted">${esc(message || "This workspace requires a token.")}</p>
       <form id="auth-form">
         ${FormField("Token", `<input data-primitive="TextInput" name="token" type="password" autocomplete="off">`)}
-        <div style="margin-top:12px">${Btn("Continue", { variant: "primary", type: "submit" })}</div>
+        <div class="form-actions">${Btn("Continue", { variant: "primary", type: "submit" })}</div>
       </form>
     </div>`;
   }
@@ -410,16 +418,15 @@
     const q = quotedOf(app);
     const d = app.comp_derived;
     const pay = q
-      ? `<div class="pay-cell">${PayQuoted(q)}${d && d.fx_as_of ? `<div class="faint">${esc(money(d.month))} ${esc(d.display_currency)} /mo</div>` : ""}</div>`
+      ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
       : PayQuoted(null);
     return {
-      company: esc(app.company),
-      title: esc(titleOf(app)),
+      company: `<strong>${esc(app.company)}</strong>`,
+      title: `<span class="muted">${esc(titleOf(app))}</span>`,
       status: StatusPill(app.status),
       modality: esc(app.modality || ""),
       location: esc(locationOf(app)),
       pay,
-      floor: FloorBadge(d),
       updated: `<span title="${esc(app.updated_at)}">${esc(relative(app.updated_at))}</span>`,
       id: CopyId(app.id),
     };
@@ -473,7 +480,7 @@
           const c = appRowCells(a);
           return `<tr data-primitive="Row" data-href="/applications/${esc(a.id)}" tabindex="0">
             <td>${c.company}</td><td>${c.title}</td><td>${c.status}</td><td>${c.modality}</td>
-            <td>${c.location}</td><td>${c.pay}</td><td>${c.floor}</td><td>${c.updated}</td><td>${c.id}</td>
+            <td>${c.location}</td><td>${c.pay}</td><td>${c.updated}</td><td>${c.id}</td>
           </tr>`;
         })
         .join("");
@@ -481,9 +488,9 @@
         .map((a) => {
           const c = appRowCells(a);
           return `<article data-primitive="Row" class="board-card" data-href="/applications/${esc(a.id)}">
-            <div class="row-line1"><strong>${c.company}</strong>${c.status}</div>
+            <div class="row-line1">${c.company}${c.status}</div>
             <div>${c.title}</div>
-            <div class="row-line1">${PayQuoted(quotedOf(a))}${c.floor}</div>
+            <div class="row-line1">${c.pay}</div>
           </article>`;
         })
         .join("");
@@ -491,7 +498,7 @@
         pageHeader("Board", `<span class="page-count">${filtered.length}</span>`, Btn("New application", { variant: "primary", href: "/applications/new" }) + CommandHint("hunt applications create --company … --json")) +
         boardFiltersHtml() +
         `<table data-primitive="DataTable" class="board-table">
-          <thead><tr><th>Company</th><th>Title</th><th>Status</th><th>Modality</th><th>Location</th><th>Pay</th><th>Floor</th><th>Updated</th><th>Id</th></tr></thead>
+          <thead><tr><th>Company</th><th>Title</th><th>Status</th><th>Modality</th><th>Location</th><th>Pay</th><th>Updated</th><th>Id</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="board-cards">${cards}</div>`;
@@ -503,6 +510,7 @@
     const body =
       pageHeader("New application", "", CommandHint("hunt applications create --company … --status researching --json")) +
       `<p class="helper-banner">Blank application for research. Screened listings must be promoted from Inbox.</p>
+      <div class="section">
       <form id="create-form" class="form-grid">
         ${FormField("Company", input("company", "", "required"), { name: "company" })}
         ${FormField("Posted title", input("title_posted", "", "required"), { name: "title_posted" })}
@@ -518,7 +526,8 @@
         ${FormField("Tax home", input("tax_home_for_net", ""))}
         ${FormField("Comp notes", textarea("comp_notes", ""), { span2: true })}
         <div class="span-2">${Btn("Create researching row", { variant: "primary", type: "submit" })}</div>
-      </form>`;
+      </form>
+      </div>`;
     root.innerHTML = shell("board", badges, body);
   }
 
@@ -568,11 +577,11 @@
           ${CommandHint(`hunt applications update ${app.id} --status ${app.status} --json`)}
         </div>
       </div>`;
+    const quoted = quotedOf(app);
     const paySummary = `<div class="section pay-summary">
-      ${PayQuoted(quotedOf(app))}
+      ${PayQuoted(quoted)}
+      ${quoted ? NetEstimate(app.comp_derived, { detail: true, taxHome: app.tax_home_for_net || "" }) : ""}
       ${PayDerived(app.comp_derived)}
-      ${app.tax_home_for_net ? `<p class="faint">tax_home_for_net ${esc(app.tax_home_for_net)}</p>` : ""}
-      <div style="margin-top:8px">${FloorBadge(app.comp_derived)}</div>
     </div>`;
     const quotedForm = `<form id="quoted-form" class="section" data-primitive="QuotedForm">
       <h2>Quoted fields</h2>
@@ -597,7 +606,7 @@
         ${FormField("CV variant", input("cv_variant_id", app.cv_variant_id))}
         ${FormField("Comp notes", textarea("comp_notes", app.comp_notes), { span2: true })}
       </div>
-      <div style="margin-top:12px">${Btn("Save quoted", { variant: "primary", type: "submit" })}</div>
+      <div class="form-actions">${Btn("Save quoted", { variant: "primary", type: "submit" })}</div>
     </form>`;
     const knocks = (app.knockouts || []).map((k) => `<span class="knockout">${esc(k)}</span>`).join("") || `<span class="muted">None</span>`;
     const urlLine = app.url
@@ -699,9 +708,11 @@
           <td>${knocks}</td>
           <td title="${esc(it.created_at)}">${esc(relative(it.created_at))}</td>
           <td>
+            <div class="inbox-actions">
             ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
             ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
             ${CommandHint(`hunt inbox promote ${it.id} --json`)}
+            </div>
           </td>
           <td>${CopyId(it.id)}</td>
         </tr>`;
@@ -711,7 +722,7 @@
       .map((it) => {
         const q = quotedOf(it);
         return `<article data-primitive="InboxRow" class="inbox-card">
-          <div class="row-line1"><strong>${esc(it.company)}</strong>${CopyId(it.id)}</div>
+          <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${CommandHint(`hunt inbox promote ${it.id} --json`)}</span></div>
           <div>${esc(it.title)}</div>
           <div>${PayQuoted(q)}</div>
           <div class="muted">${esc(it.why_keep || "")}</div>
