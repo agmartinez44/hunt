@@ -19,15 +19,46 @@ fx:
     GBP: 1.15
     PLN: 0.23
     CHF: 1.05
+# Operator-updatable estimate tables (not tax advice).
+# Net = gross − social − income. social = gross*social_rate + FX(social_fixed_month).
+# income = income_base * income_rate (income_base defaults to gross).
+# vat_out: quoted B2B/JDG/autónomo is treated as ex-VAT revenue.
 tax_homes:
-  pl_jdg:
-    effective_rate: 0.17
-  es_autonomo:
-    effective_rate: 0.30
-  ch_fte:
-    effective_rate: 0.22
-  us_1099:
-    effective_rate: 0.28
+  CH:
+    fte:
+      income_rate: 0.16
+      social_rate: 0.064
+      vat_out: false
+      source: "example 2026 blended federal+canton income + employee AHV/ALV — estimate, not tax advice"
+    freelance:
+      income_rate: 0.16
+      social_rate: 0.10
+      vat_out: true
+      source: "example 2026 self-employed AHV + income estimate; VAT-out for B2B quotes"
+  ES:
+    fte:
+      income_rate: 0.24
+      social_rate: 0.065
+      vat_out: false
+      source: "example 2026 IRPF withholding + employee SS — estimate, not tax advice"
+    freelance:
+      income_rate: 0.20
+      social_fixed_month: 300
+      social_fixed_currency: EUR
+      vat_out: true
+      source: "example 2026 autónomo cuota + IRPF; VAT-out"
+  PL:
+    fte:
+      income_rate: 0.12
+      social_rate: 0.1371
+      vat_out: false
+      source: "example 2026 PIT 12% first-bracket + employee ZUS — estimate, not tax advice"
+    freelance:
+      income_rate: 0.12
+      social_fixed_month: 400
+      social_fixed_currency: EUR
+      vat_out: true
+      source: "example 2026 JDG ryczałt 12% IT + ZUS lump; VAT-out for B2B quotes"
 worker:
   backend: none
 cv:

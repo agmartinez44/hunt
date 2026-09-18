@@ -13,13 +13,16 @@ from typing import Any
 
 from hunt.core.applications import (
     create_application,
+    estimate_for_workspace,
     get_application,
     list_applications,
+    restamp_derived,
     update_application,
 )
+from hunt.core.pay import PAY_UNITS, QuotedPay
 from hunt.core.artifacts import add_file
 from hunt.core.cv import render as render_cv
-from hunt.core.errors import HuntError
+from hunt.core.errors import HuntError, ValidationError
 from hunt.core.events import list_events
 from hunt.core.inbox import dismiss, list_inbox, promote
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
@@ -187,7 +190,6 @@ def cmd_applications_list(args: argparse.Namespace) -> None:
                 "status": a["status"],
                 "quoted": _quoted_label(a),
                 "net_month": _derived_net(a),
-                "clears_floor": (a.get("comp_derived") or {}).get("clears_floor"),
             }
             for a in apps
         ],
@@ -198,7 +200,6 @@ def cmd_applications_list(args: argparse.Namespace) -> None:
             ("status", "STATUS"),
             ("quoted", "QUOTED"),
             ("net_month", "NET/MO"),
-            ("clears_floor", "FLOOR"),
         ],
     )
 
@@ -453,6 +454,38 @@ def cmd_serve(args: argparse.Namespace) -> None:
     serve(data_dir=getattr(args, "data", None), host=args.host, port=args.port)
 
 
+def cmd_pay_estimate(args: argparse.Namespace) -> None:
+    try:
+        quoted = QuotedPay(
+            amount=float(args.amount),
+            currency=str(args.currency),
+            unit=str(args.unit),
+        )
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    with _open(args) as ws:
+        estimate = estimate_for_workspace(
+            ws,
+            quoted,
+            country=args.country,
+            engagement=args.engagement,
+            tax_home=args.tax_home,
+        )
+    if args.json:
+        _dump_json(estimate)
+        return
+    print_kv(estimate)
+
+
+def cmd_pay_restamp(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        result = restamp_derived(ws)
+    if args.json:
+        _dump_json(result)
+        return
+    print_kv(result)
+
+
 def cmd_cv_render(args: argparse.Namespace) -> None:
     with _open(args) as ws:
         result = render_cv(
@@ -561,6 +594,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_ev = ev_verbs.add_parser("list", help="List events for an application")
     p_ev.add_argument("--application", required=True)
     p_ev.set_defaults(func=cmd_events_list)
+
+    pay = nouns.add_parser("pay", help="Quoted → net / month estimates")
+    pay_verbs = pay.add_subparsers(dest="verb", required=True)
+    p_est = pay_verbs.add_parser(
+        "estimate",
+        help="Net / month in display currency from country + engagement",
+    )
+    p_est.add_argument("--country", help="CH|ES|PL or a common name")
+    p_est.add_argument(
+        "--engagement",
+        help="fte or freelance (b2b / jdg / autonomo / uop map onto those)",
+    )
+    p_est.add_argument("--amount", type=float, required=True)
+    p_est.add_argument("--currency", required=True)
+    p_est.add_argument("--unit", required=True, choices=list(PAY_UNITS))
+    p_est.add_argument("--tax-home", dest="tax_home", help="Optional override (legacy key or CH.fte)")
+    p_est.set_defaults(func=cmd_pay_estimate)
+    p_rst = pay_verbs.add_parser(
+        "restamp",
+        help="Recompute stored derived pay from current tax_homes + FX",
+    )
+    p_rst.set_defaults(func=cmd_pay_restamp)
 
     cv = nouns.add_parser("cv", help="Honesty-gated CV pipeline")
     cv_verbs = cv.add_subparsers(dest="verb", required=True)

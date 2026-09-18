@@ -9,7 +9,7 @@ from typing import Any
 from hunt.core.errors import NotFoundError, ValidationError
 from hunt.core.events import append_event
 from hunt.core.ids import new_id, now_iso
-from hunt.core.pay import DerivedPay, QuotedPay, derive_pay
+from hunt.core.pay import DerivedPay, QuotedPay, derive_pay, estimate_pay
 from hunt.core.workspace import Workspace
 
 APPLICATION_STATUSES = (
@@ -169,6 +169,9 @@ def derive_for_workspace(
     ws: Workspace,
     quoted: QuotedPay | None,
     tax_home: str | None,
+    *,
+    country: str | None = None,
+    engagement: str | None = None,
 ) -> DerivedPay | None:
     return derive_pay(
         quoted,
@@ -176,6 +179,30 @@ def derive_for_workspace(
         fx_as_of=ws.fx_as_of,
         fx_rates=ws.fx_rates,
         hours_per_month=ws.hours_per_month,
+        tax_home=tax_home,
+        tax_homes=ws.tax_homes,
+        comp_floor=ws.comp_floor,
+        country=country,
+        engagement=engagement,
+    )
+
+
+def estimate_for_workspace(
+    ws: Workspace,
+    quoted: QuotedPay | None,
+    *,
+    country: str | None = None,
+    engagement: str | None = None,
+    tax_home: str | None = None,
+) -> dict[str, Any]:
+    return estimate_pay(
+        quoted,
+        display_currency=ws.display_currency,
+        fx_as_of=ws.fx_as_of,
+        fx_rates=ws.fx_rates,
+        hours_per_month=ws.hours_per_month,
+        country=country,
+        engagement=engagement,
         tax_home=tax_home,
         tax_homes=ws.tax_homes,
         comp_floor=ws.comp_floor,
@@ -321,7 +348,13 @@ def create_application(
     modality = _validate_modality(modality)
     engagement = _validate_engagement(engagement)
     quoted = _quoted(comp_amount, comp_currency, comp_unit)
-    derived = derive_for_workspace(ws, quoted, tax_home_for_net)
+    derived = derive_for_workspace(
+        ws,
+        quoted,
+        tax_home_for_net,
+        country=location_country,
+        engagement=engagement,
+    )
     now = now_iso()
     app_id = application_id or new_id()
     langs = _json_list(languages_required)
@@ -476,7 +509,13 @@ def update_application(ws: Workspace, application_id: str, **fields: Any) -> App
     if "comp_unit" in changed:
         unit = changed["comp_unit"] or None
     quoted = _quoted(amount, currency, unit)
-    derived = derive_for_workspace(ws, quoted, data.get("tax_home_for_net"))
+    derived = derive_for_workspace(
+        ws,
+        quoted,
+        data.get("tax_home_for_net"),
+        country=data.get("location_country"),
+        engagement=data.get("engagement"),
+    )
     cols = _derived_columns(derived)
     now = now_iso()
     ws.conn.execute(
@@ -535,3 +574,55 @@ def update_application(ws: Workspace, application_id: str, **fields: Any) -> App
     )
     ws.conn.commit()
     return get_application(ws, application_id)
+
+
+def restamp_derived(ws: Workspace) -> dict[str, Any]:
+    """Recompute stored derived pay from current workspace tax tables + FX."""
+    apps = list_applications(ws)
+    changed: list[str] = []
+    for app in apps:
+        derived = derive_for_workspace(
+            ws,
+            app.comp_quoted,
+            app.tax_home_for_net,
+            country=app.location_country,
+            engagement=app.engagement,
+        )
+        cols = _derived_columns(derived)
+        current = app.comp_derived
+        same = (
+            (current is None and derived is None)
+            or (
+                current is not None
+                and derived is not None
+                and current.to_dict() == derived.to_dict()
+            )
+        )
+        if same:
+            continue
+        now = now_iso()
+        ws.conn.execute(
+            """
+            UPDATE applications SET
+                fx_as_of=?, display_currency=?, derived_hour=?, derived_day=?,
+                derived_month=?, derived_year=?, derived_net_month=?,
+                derived_clears_floor=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                cols["fx_as_of"],
+                cols["display_currency"],
+                cols["derived_hour"],
+                cols["derived_day"],
+                cols["derived_month"],
+                cols["derived_year"],
+                cols["derived_net_month"],
+                cols["derived_clears_floor"],
+                now,
+                app.id,
+            ),
+        )
+        changed.append(app.id)
+    if changed:
+        ws.conn.commit()
+    return {"restamped": len(changed), "ids": changed, "total": len(apps)}

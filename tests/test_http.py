@@ -83,7 +83,7 @@ def test_board_crud_http_and_cli_json(client):
     assert derived["fx_as_of"] == "2026-09-01"
     assert derived["hour"] == 45.0
     assert derived["month"] == 7200.0
-    assert derived["net_month"] == 5976.0
+    assert derived["net_month"] == 5936.0
     assert derived["clears_floor"] is False
     app_id = app["id"]
     assert (data / "store.sqlite").is_file()

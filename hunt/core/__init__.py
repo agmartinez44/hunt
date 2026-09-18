@@ -15,7 +15,7 @@ from hunt.core.errors import HuntError, NotFoundError, ValidationError
 from hunt.core.events import Event, list_events
 from hunt.core.inbox import InboxItem, add_item, dismiss, list_inbox, promote
 from hunt.core.jobs import Job, enqueue as enqueue_job, get_job, list_jobs
-from hunt.core.pay import DerivedPay, QuotedPay, derive_pay
+from hunt.core.pay import DerivedPay, QuotedPay, derive_pay, estimate_pay
 from hunt.core.sources import Source, get_source, list_sources, run_source
 from hunt.core.workspace import Workspace
 
@@ -36,6 +36,7 @@ __all__ = [
     "add_item",
     "create_application",
     "derive_pay",
+    "estimate_pay",
     "dismiss",
     "enqueue_job",
     "get_application",

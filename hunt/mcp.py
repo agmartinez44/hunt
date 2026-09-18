@@ -9,14 +9,17 @@ from typing import Any
 from hunt import __version__
 from hunt.core.applications import (
     create_application,
+    estimate_for_workspace,
     get_application,
     list_applications,
+    restamp_derived,
     update_application,
 )
+from hunt.core.pay import QuotedPay
 from hunt.core.artifacts import add_file
 from hunt.core.context import current_actor
 from hunt.core.cv import render as render_cv
-from hunt.core.errors import HuntError
+from hunt.core.errors import HuntError, ValidationError
 from hunt.core.events import list_events
 from hunt.core.inbox import dismiss, list_inbox, promote
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
@@ -167,6 +170,24 @@ TOOLS: list[dict[str, Any]] = [
         {"application_id": {"type": "string"}},
         ["application_id"],
     ),
+    _tool(
+        "pay_estimate",
+        "Net / month estimate in display currency. Country + engagement is enough. Estimate, not tax advice. Never apply.",
+        {
+            "country": {"type": "string"},
+            "engagement": {"type": "string"},
+            "amount": {"type": "number"},
+            "currency": {"type": "string"},
+            "unit": {"type": "string"},
+            "tax_home": {"type": "string"},
+        },
+        ["amount", "currency", "unit"],
+    ),
+    _tool(
+        "pay_restamp",
+        "Recompute stored derived pay from current tax_homes + FX.",
+        {},
+    ),
 ]
 
 
@@ -271,6 +292,25 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
     if name == "events_list":
         events = [e.to_dict() for e in list_events(ws, arguments["application_id"])]
         return _ok({"events": events})
+    if name == "pay_estimate":
+        try:
+            quoted = QuotedPay(
+                amount=float(arguments["amount"]),
+                currency=str(arguments["currency"]),
+                unit=str(arguments["unit"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError(str(exc)) from exc
+        estimate = estimate_for_workspace(
+            ws,
+            quoted,
+            country=arguments.get("country"),
+            engagement=arguments.get("engagement"),
+            tax_home=arguments.get("tax_home"),
+        )
+        return _ok(estimate)
+    if name == "pay_restamp":
+        return _ok(restamp_derived(ws))
     return _err(f"unknown tool: {name}")
 
 

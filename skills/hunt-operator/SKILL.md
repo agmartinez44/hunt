@@ -46,6 +46,7 @@ Promote is the **only** listing → application path, including MCP.
 | `jobs_enqueue/status/run` | Types: `source-poll`, `screen-inbox`, `tailor-cv` |
 | `cv_render` | Writes `$HUNT_DATA/attachments`; then finalize + verify |
 | `sources_list/run` | Run enqueues `source-poll`; does not promote |
+| `pay_estimate` | Country + engagement → net / month EUR. Estimate, not tax advice. |
 
 `jobs_enqueue` with `run: true` (CLI `--run`) claims and executes immediately.
 `worker.backend` `none` means you must run/drain jobs; `cli` is the in-process

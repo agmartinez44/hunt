@@ -97,7 +97,7 @@ def test_board_crud_json_and_restart(workspace):
     assert derived["day"] == 360.0
     assert derived["month"] == 7200.0
     assert derived["year"] == 86400.0
-    assert derived["net_month"] == 5976.0
+    assert derived["net_month"] == 5936.0
     assert derived["clears_floor"] is False
     assert (data / "store.sqlite").is_file()
     assert not (ROOT / "store.sqlite").exists()
@@ -239,3 +239,93 @@ def test_human_table_and_error_without_workspace(tmp_path: Path):
     empty = _run(["applications", "list"], env)
     assert empty.returncode == 0
     assert "(none)" in empty.stdout
+
+
+def test_pay_estimate_json_six_cells_and_usd_hour(workspace):
+    _, env = workspace
+    cells = [
+        ("CH", "fte", 7760.0, False),
+        ("Switzerland", "freelance", 7400.0, True),
+        ("ES", "fte", 6950.0, False),
+        ("Spain", "autonomo", 7700.0, True),
+        ("PL", "fte", 7429.0, False),
+        ("Poland", "jdg", 8400.0, True),
+    ]
+    for country, engagement, net, vat_out in cells:
+        _, payload = _json(
+            [
+                "pay",
+                "estimate",
+                "--country",
+                country,
+                "--engagement",
+                engagement,
+                "--amount",
+                "10000",
+                "--currency",
+                "EUR",
+                "--unit",
+                "month",
+            ],
+            env,
+        )
+        assert payload["net_month"] == net, (country, engagement, payload)
+        assert payload["gross"]["month"] == 10000.0
+        assert payload["assumptions"]["vat_out"] is vat_out
+        assert payload["assumptions"]["disclaimer"].startswith("Estimate")
+        assert payload["clears_floor"] is (net >= 7000)
+
+    _, usd = _json(
+        [
+            "pay",
+            "estimate",
+            "--country",
+            "PL",
+            "--engagement",
+            "b2b",
+            "--amount",
+            "50",
+            "--currency",
+            "USD",
+            "--unit",
+            "hour",
+        ],
+        env,
+    )
+    assert usd["gross"]["hour"] == 45.0
+    assert usd["gross"]["day"] == 360.0
+    assert usd["gross"]["month"] == 7200.0
+    assert usd["gross"]["year"] == 86400.0
+    assert usd["net_month"] == 5936.0
+    assert usd["clears_floor"] is False
+
+
+def test_pay_estimate_pl_fte_without_tax_home(workspace):
+    data, env = workspace
+    _, created = _json(
+        [
+            "applications",
+            "create",
+            "--company",
+            "Example Search",
+            "--location-country",
+            "PL",
+            "--engagement",
+            "fte",
+            "--comp-amount",
+            "364000",
+            "--comp-currency",
+            "PLN",
+            "--comp-unit",
+            "year",
+        ],
+        env,
+    )
+    derived = created["application"]["comp_derived"]
+    assert created["application"]["tax_home_for_net"] is None
+    assert derived["month"] == 6976.0
+    assert derived["net_month"] == 5182.47
+    assert derived["clears_floor"] is False
+
+    _, restamp = _json(["pay", "restamp"], env)
+    assert restamp["total"] >= 1
