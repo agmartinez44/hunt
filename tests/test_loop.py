@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -160,6 +161,27 @@ def test_disabled_imap_source_does_not_run(workspace):
     assert "disabled" in json.loads(failed.stderr)["error"]
 
 
+def test_jobs_worker_drains_oldest_first(workspace):
+    data, env = workspace
+    _, first = _json(["jobs", "enqueue", "--type", "screen-inbox"], env)
+    _, second = _json(["jobs", "enqueue", "--type", "screen-inbox"], env)
+    first_id = first["job"]["id"]
+    second_id = second["job"]["id"]
+    conn = sqlite3.connect(data / "store.sqlite")
+    conn.execute(
+        "UPDATE jobs SET created_at = ? WHERE id = ?",
+        ("2026-01-01T00:00:00Z", first_id),
+    )
+    conn.execute(
+        "UPDATE jobs SET created_at = ? WHERE id = ?",
+        ("2026-01-02T00:00:00Z", second_id),
+    )
+    conn.commit()
+    conn.close()
+    _, out = _json(["jobs", "worker"], env)
+    assert [row["job"]["id"] for row in out["runs"]] == [first_id, second_id]
+
+
 def test_http_json_is_get_only():
     with pytest.raises(Exception, match="GET-only"):
         poll_http_json({"url": "https://example.test/apply", "method": "POST"})
@@ -196,6 +218,75 @@ def test_imap_alerts_peek_readonly():
     assert len(listings) == 1
     assert listings[0].title.startswith("Job alert")
     assert listings[0].company == "Job alert"
+
+
+def test_imap_alerts_filters_before_limit():
+    messages = {}
+    messages["1"] = {
+        "from": "jobalerts-noreply@linkedin.com",
+        "subject": "Acme is hiring a Staff SRE",
+        "date": "Thu, 1 Jan 2026 00:00:00 +0000",
+        "message_id": "<old-alert@linkedin.com>",
+    }
+    for i in range(2, 62):
+        messages[str(i)] = {
+            "from": "hit-reply@linkedin.com",
+            "subject": f"Message replied: chat {i}",
+            "date": "Thu, 1 Jan 2026 00:00:00 +0000",
+            "message_id": f"<inmail-{i}@linkedin.com>",
+        }
+    fake = FakeIMAP(messages)
+    listings = poll_imap_alerts(
+        {
+            "from_contains": ["jobalerts-noreply"],
+            "subject_contains": ["is hiring", " at ", "jobs for you"],
+            "company_default": "LinkedIn",
+            "limit": 50,
+        },
+        {},
+        connect=lambda: fake,
+    )
+    assert len(listings) == 1
+    assert listings[0].title == "Acme is hiring a Staff SRE"
+
+
+def test_imap_alerts_skips_inmail_from_same_domain():
+    fake = FakeIMAP(
+        {
+            "1": {
+                "from": "jobalerts-noreply@linkedin.com",
+                "subject": "Reap is hiring a Senior Site Reliability Engineer",
+                "date": "Thu, 1 Jan 2026 00:00:00 +0000",
+                "message_id": "<alert@linkedin.com>",
+            },
+            "2": {
+                "from": "inmail-hit-reply@linkedin.com",
+                "subject": "Senior Site Reliability Engineer",
+                "date": "Thu, 1 Jan 2026 00:00:00 +0000",
+                "message_id": "<inmail@linkedin.com>",
+            },
+            "3": {
+                "from": "jobalerts-noreply@linkedin.com",
+                "subject": "SRE at ExampleCorp: up to EUR 10K/month",
+                "date": "Thu, 1 Jan 2026 00:00:00 +0000",
+                "message_id": "<salary-alert@linkedin.com>",
+            },
+        }
+    )
+    listings = poll_imap_alerts(
+        {
+            "from_contains": ["jobalerts-noreply"],
+            "subject_contains": ["is hiring", " at "],
+            "company_default": "LinkedIn",
+        },
+        {},
+        connect=lambda: fake,
+    )
+    titles = {row.title for row in listings}
+    assert titles == {
+        "Reap is hiring a Senior Site Reliability Engineer",
+        "SRE at ExampleCorp: up to EUR 10K/month",
+    }
 
 
 def test_adapter_sources_have_no_submit():

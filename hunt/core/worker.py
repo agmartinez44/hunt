@@ -100,7 +100,8 @@ def drain(ws: Workspace) -> list[dict[str, Any]]:
         queued = list_jobs(ws, state="queued")
         if not queued:
             return out
+        oldest = min(queued, key=lambda job: (job.created_at or "", job.id))
         try:
-            out.append(run_one(ws, queued[0].id))
+            out.append(run_one(ws, oldest.id))
         except NotFoundError:
             return out

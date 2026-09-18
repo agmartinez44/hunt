@@ -62,6 +62,30 @@ def _matches(text: str, needles: list[str]) -> bool:
     return any(n.lower() in blob for n in needles if n)
 
 
+def _imap_quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _or_search(field: str, needles: list[str]) -> str:
+    parts = [f"({field} {_imap_quote(n)})" for n in needles if n]
+    if not parts:
+        return "ALL"
+    expr = parts[0]
+    for part in parts[1:]:
+        expr = f"(OR {part} {expr})"
+    return expr
+
+
+def _search_ids(client: Any, from_needles: list[str]) -> list[bytes]:
+    criteria = _or_search("FROM", from_needles) if from_needles else "ALL"
+    typ, data = client.search(None, criteria)
+    if (typ != "OK" or not data or not data[0]) and criteria != "ALL":
+        typ, data = client.search(None, "ALL")
+    if typ != "OK" or not data or not data[0]:
+        return []
+    return list(data[0].split())
+
+
 def _connect_ssl(host: str, port: int, user: str, password: str):
     context = ssl.create_default_context()
     client = imaplib.IMAP4_SSL(host, port, ssl_context=context)
@@ -106,11 +130,7 @@ def poll_imap_alerts(
         typ, _ = client.select(folder, readonly=True)
         if typ != "OK":
             raise HuntError(f"imap folder not selectable: {folder}")
-        typ, data = client.search(None, "ALL")
-        if typ != "OK" or not data:
-            return []
-        ids = data[0].split() if data[0] else []
-        ids = ids[-limit:]
+        ids = _search_ids(client, from_needles)
         for msg_id in ids:
             typ, fetched = client.fetch(
                 msg_id,
@@ -148,6 +168,7 @@ def poll_imap_alerts(
                     },
                 )
             )
+        listings = listings[-limit:]
     finally:
         logout = getattr(client, "logout", None)
         if callable(logout):

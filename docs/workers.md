@@ -25,9 +25,12 @@ hunt --json jobs worker           # drain the queue once
 
 ## `cli`
 
-Same in-process executor. Point a cron or supervisor at:
+Same in-process executor. Point a cron or supervisor at a drain, after
+enqueueing the work you want:
 
 ```bash
+hunt --data "$HUNT_DATA" --json sources run linkedin-alerts
+hunt --data "$HUNT_DATA" --json jobs enqueue --type screen-inbox
 hunt --data "$HUNT_DATA" jobs worker
 ```
 
@@ -50,4 +53,7 @@ Hunt does not ship a Hermes client. There is no apply/send job type.
 
 Adapters (`imap_alerts`, `http_json`) never POST an application and never
 send mail. `imap_alerts` selects the folder `readonly=True` and uses
-`BODY.PEEK`. Credentials live in `$HUNT_DATA/secrets.env`, not in git.
+`BODY.PEEK`. It searches FROM (when configured), then applies header
+filters, then the `limit` — so matches older than the last N messages in
+a large INBOX still land. Credentials live in `$HUNT_DATA/secrets.env`,
+not in git.
