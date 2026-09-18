@@ -1,0 +1,60 @@
+# Achievement bullet bank — the single source of CV bullets.
+# verified: false  → the pipeline REFUSES to render this bullet.
+# evidence must point at something checkable: a repo, doc, review, or
+# "manager reference (name)". Quantified claims need more than "own work".
+
+achievements:
+  - id: wc-gitops
+    text: "Built GitOps delivery on GitHub Actions and Argo CD, cutting deployment lead time from days to under an hour for 12 services."
+    tags: [cicd, gitops, platform]
+    evidence: "Delivery metrics dashboard, reviewed in Q3 2024 team retro."
+    verified: true
+
+  - id: wc-slo
+    text: "Introduced SLI/SLO definitions with error budgets for three tier-1 services; used budgets to defer two feature launches rather than breach reliability targets."
+    tags: [sre, observability]
+    evidence: "SLO docs in internal wiki; launch-deferral decision recorded in ADR-041."
+    verified: true
+
+  - id: wc-k8s
+    text: "Operate the team's Kubernetes namespaces on EKS, including Helm chart standards and Python/Bash-based upgrade and cleanup tooling."
+    tags: [kubernetes, automation]
+    evidence: "Own work."
+    verified: true
+
+  - id: wc-iac
+    text: "Manage service infrastructure as code with reusable Terraform modules; operate the team's Prometheus and Grafana monitoring stack."
+    tags: [automation, cloud, observability]
+    evidence: "Terraform repo + Grafana dashboards under team ownership."
+    verified: true
+
+  - id: wc-oncall
+    text: "Run primary on-call for team services; author postmortems adopted as org-wide templates."
+    tags: [incident]
+    evidence: "Postmortem docs linked in team handbook."
+    verified: true
+
+  - id: ec-ansible
+    text: "Automated OS patching across ~400 VMs with Ansible orchestrated via AWX, reducing patch windows from weekends to overnight runs."
+    tags: [automation, linux]
+    evidence: "Patch reports from AWX; scope is ExampleCorp-only (see integrity.yaml)."
+    verified: true
+
+  - id: ec-monitoring
+    text: "Deployed Prometheus and Grafana monitoring stack replacing ad-hoc Nagios checks; cut alert noise by roughly half after tuning."
+    tags: [observability, scale]
+    evidence: "Grafana dashboards still in place at exit; 'roughly half' is an estimate — confirm before quoting as exact."
+    verified: false   # ← human has not confirmed the alert-noise figure yet
+
+  - id: ec-migration
+    text: "Co-led datacenter-to-cloud migration of 25 services with zero customer-visible downtime."
+    tags: [cloud, scale]
+    evidence: "Migration runbook + sign-off email from engineering director."
+    verified: true
+
+# Emphasis profiles: tag priority per role family.
+emphasis_profiles:
+  generic:
+    order: [platform, sre, kubernetes, cicd, observability, incident,
+            automation, gitops, cloud, scale, linux]
+    headline_key: generic

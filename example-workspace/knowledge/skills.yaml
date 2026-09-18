@@ -1,0 +1,28 @@
+# Skills with honest proficiency calibration.
+# level: production | working | limited | homelab
+# employer_scope: tool only used at that employer — omitted from generic
+#   skills lines to prevent cross-employer contamination.
+skill_groups:
+  - name: Platforms & delivery
+    skills:
+      - {name: Kubernetes, level: production}
+      - {name: AWS (EKS), level: production}
+      - {name: Helm, level: production}
+      - {name: Argo CD / GitOps, level: production}
+      - {name: GitHub Actions, level: production}
+      - {name: Terraform, level: production}
+      - {name: Ansible (AWX), level: production, employer_scope: examplecorp}
+  - name: Observability
+    skills:
+      - {name: Prometheus, level: production}
+      - {name: Grafana, level: production}
+      - {name: SLIs/SLOs, level: production}
+  - name: Languages & code
+    skills:
+      - {name: Python, level: production}
+      - {name: Bash, level: production}
+      - {name: Go, level: limited}
+
+forbidden_claims:
+  - DBA ownership or database backup/restore responsibility
+  - org-wide platform ownership at WidgetCorp

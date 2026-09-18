@@ -1,0 +1,10 @@
+certifications:
+  - name: Certified Kubernetes Administrator (CKA)
+    year: 2024
+
+projects:
+  - id: home-lab
+    name: Home lab
+    bullets:
+      - "Self-hosted K3s cluster with Argo CD, Prometheus and automated backups — used to prototype GitOps patterns before proposing them at work."
+      - "Clearly personal-project scope; never describe as professional production experience."

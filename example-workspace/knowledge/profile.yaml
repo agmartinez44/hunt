@@ -1,0 +1,16 @@
+# Profile — contact details live here ONLY.
+name: "Jane Doe"
+headlines:
+  generic: "Senior Platform Engineer — Reliability & Delivery"
+location: "Dublin, Ireland"
+citizenship: "EU (Irish)"
+languages:
+  - {name: English, level: native}
+  - {name: Spanish, level: working}
+contact:
+  linkedin: "linkedin.com/in/jane-doe-example"
+  email: "jane.doe@example.org"
+  phone: "+353 000 000 000"   # fictional — replace with your own
+education:
+  - degree: "BSc Computer Science"
+    institution: "University College Dublin"

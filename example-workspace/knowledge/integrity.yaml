@@ -1,0 +1,21 @@
+# Integrity rules — the honesty gate, as data.
+# render.py and verify_cv.py both read this file. Edit only with human
+# confirmation of a new boundary; never weaken existing entries.
+
+forbidden_phrases:
+  # Never appear anywhere in rendered output (case-insensitive).
+  - "backup and restore responsibility"
+  - "database administrator"
+
+line_traps:
+  # term must never share an extracted text line with never_with.
+  - {term: "Ansible", never_with: "ExampleCorp"}
+  - {term: "AWX", never_with: "ExampleCorp"}
+  - {term: "Rundeck", never_with: "ExampleCorp"}
+  - {term: "GitLab CI", never_with: "ExampleCorp"}
+
+quantifier_terms:
+  # Bullets containing these REQUIRE an evidence pointer beyond "own work".
+  - "%"
+  - "x faster"
+  - "fold"

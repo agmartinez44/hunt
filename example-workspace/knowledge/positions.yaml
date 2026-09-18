@@ -1,0 +1,25 @@
+# Employment history. scope_facts are hard boundaries the agent must respect.
+positions:
+  - id: widgetcorp
+    title: Senior Platform Engineer
+    employer: WidgetCorp
+    location: Dublin, Ireland
+    start: 2023-03
+    end: present
+    scope_facts:
+      - "Platform team of 5 inside a 40-engineer org — do NOT claim org-wide platform ownership."
+      - "CI/CD is GitHub Actions only; no Jenkins at WidgetCorp."
+    verified: true
+    default_achievements: [wc-gitops, wc-slo, wc-k8s, wc-iac, wc-oncall]
+
+  - id: examplecorp
+    title: DevOps Engineer
+    employer: ExampleCorp
+    location: Remote
+    start: 2020-06
+    end: 2023-02
+    scope_facts:
+      - "Ansible/AWX usage is ExampleCorp-only — never attribute to WidgetCorp."
+      - "Database work was operate/support; no DBA ownership."
+    verified: true
+    default_achievements: [ec-ansible, ec-monitoring, ec-migration]

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hunt"
+version = "0.1.0"
+description = "Self-hosted, agent-native job-hunt platform"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Hunt contributors" }]
+dependencies = [
+  "jinja2",
+  "pyyaml",
+  "weasyprint",
+  "pikepdf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+hunt-cv = "hunt.cv.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hunt*"]
+
+[tool.setuptools.package-data]
+"hunt.cv" = ["template/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

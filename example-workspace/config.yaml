@@ -1,0 +1,12 @@
+# Fictional example workspace. Copy to $HUNT_DATA.
+# Runtime / CLI will read this; hunt.cv only needs knowledge/.
+
+bind: "127.0.0.1"
+port: 8787
+hours_per_month: 160
+days_per_month: 21
+display_currency: EUR
+worker:
+  backend: none
+cv:
+  filename_pattern: "{name}_CV"
