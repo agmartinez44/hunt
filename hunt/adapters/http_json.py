@@ -93,14 +93,84 @@ def _get_json(url: str, headers: dict[str, str], timeout: int = 30) -> Any:
         return json.loads(resp.read().decode("utf-8"))
 
 
+FANOUT_QUERY_KEYS = frozenset({"q"})
+
+
 def _with_query(url: str, extra: dict[str, Any]) -> str:
     parsed = urlparse(url)
-    current = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    current: dict[str, Any] = dict(parse_qsl(parsed.query, keep_blank_values=True))
     for key, value in extra.items():
         if value is None:
             continue
-        current[str(key)] = str(value)
-    return urlunparse(parsed._replace(query=urlencode(current)))
+        if isinstance(value, (list, tuple)):
+            current[str(key)] = [str(v) for v in value]
+        else:
+            current[str(key)] = str(value)
+    return urlunparse(parsed._replace(query=urlencode(current, doseq=True)))
+
+
+def _limit_listings(listings: list[RawListing], cfg: dict[str, Any]) -> list[RawListing]:
+    max_items = cfg.get("max_items")
+    try:
+        limit = int(max_items) if max_items not in (None, "") else 0
+    except (TypeError, ValueError):
+        limit = 0
+    if limit and len(listings) > limit:
+        return listings[:limit]
+    return listings
+
+
+def _poll_http_pages(
+    url: str,
+    query: dict[str, Any],
+    paginate: dict[str, Any],
+    cfg: dict[str, Any],
+    fetch: Callable[..., Any],
+    headers: dict[str, str],
+) -> list[RawListing]:
+    max_pages = int(paginate.get("max_pages") or 1)
+    page_size = int(paginate.get("page_size") or query.get("itemsCount") or 50)
+    param = paginate.get("param")
+    seen: set[str] = set()
+    out: list[RawListing] = []
+    cursor: Any = query.get(param) if param else 0
+    pages = 0
+    while pages < max_pages:
+        extra = dict(query)
+        if param:
+            extra[param] = cursor if cursor is not None else pages * page_size
+        page_url = _with_query(str(url), extra)
+        payload = fetch(page_url, headers)
+        batch = _map_items(payload, cfg)
+        if not batch:
+            break
+        new = 0
+        for listing in batch:
+            if listing.external_id in seen:
+                continue
+            seen.add(listing.external_id)
+            out.append(listing)
+            new += 1
+        pages += 1
+        if new == 0:
+            break
+        nxt = _dotted(payload, paginate.get("cursor_path")) if paginate.get("cursor_path") else None
+        total = _dotted(payload, paginate.get("total_path")) if paginate.get("total_path") else None
+        if nxt is not None:
+            cursor = nxt
+        elif param:
+            cursor = int(cursor or 0) + len(batch)
+        else:
+            break
+        if total is not None:
+            try:
+                if int(cursor or 0) >= int(total):
+                    break
+            except (TypeError, ValueError):
+                pass
+        if len(batch) < page_size:
+            break
+    return out
 
 
 def _tokens(value: Any) -> set[str]:
@@ -491,49 +561,22 @@ def poll_http_json(
         raise ValidationError("http_json needs url or path")
     query = cfg.get("query") if isinstance(cfg.get("query"), dict) else {}
     paginate = cfg.get("paginate") if isinstance(cfg.get("paginate"), dict) else {}
-    max_pages = int(paginate.get("max_pages") or 1)
-    page_size = int(paginate.get("page_size") or query.get("itemsCount") or 50)
-    param = paginate.get("param")
-    seen: set[str] = set()
-    out: list[RawListing] = []
-    cursor: Any = query.get(param) if param else 0
-    pages = 0
-    while pages < max_pages:
-        extra = dict(query)
-        if param:
-            extra[param] = cursor if cursor is not None else pages * page_size
-        page_url = _with_query(str(url), extra)
-        payload = fetch(page_url, headers)
-        batch = _map_items(payload, cfg)
-        if not batch:
-            break
-        new = 0
-        for listing in batch:
-            if listing.external_id in seen:
-                continue
-            seen.add(listing.external_id)
-            out.append(listing)
-            new += 1
-        pages += 1
-        if new == 0:
-            break
-        nxt = _dotted(payload, paginate.get("cursor_path")) if paginate.get("cursor_path") else None
-        total = _dotted(payload, paginate.get("total_path")) if paginate.get("total_path") else None
-        if nxt is not None:
-            cursor = nxt
-        elif param:
-            cursor = int(cursor or 0) + len(batch)
-        else:
-            break
-        if total is not None:
-            try:
-                if int(cursor or 0) >= int(total):
-                    break
-            except (TypeError, ValueError):
-                pass
-        if len(batch) < page_size:
-            break
-    return out
+    q_values = query.get("q") if "q" in FANOUT_QUERY_KEYS else None
+    if isinstance(q_values, (list, tuple)):
+        seen: set[str] = set()
+        out: list[RawListing] = []
+        for q_value in q_values:
+            extra = dict(query)
+            extra["q"] = q_value
+            for listing in _poll_http_pages(
+                str(url), extra, paginate, cfg, fetch, headers
+            ):
+                if listing.external_id in seen:
+                    continue
+                seen.add(listing.external_id)
+                out.append(listing)
+        return _limit_listings(out, cfg)
+    return _poll_http_pages(str(url), query, paginate, cfg, fetch, headers)
 
 
 def _map_items(payload: Any, cfg: dict[str, Any]) -> list[RawListing]:

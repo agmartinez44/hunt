@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from urllib.parse import parse_qsl, urlparse
+
 from hunt.adapters.http_json import poll_http_json
 from hunt.adapters.imap_alerts import poll_imap_alerts
 from hunt.core.workspace import Workspace
@@ -220,6 +222,98 @@ def test_http_json_is_get_only():
         poll_http_json({"url": "https://example.test/apply", "method": "POST"})
 
 
+def _query_pairs(url: str) -> list[tuple[str, str]]:
+    return parse_qsl(urlparse(url).query, keep_blank_values=True)
+
+
+def test_http_json_q_list_fans_out_and_unions_by_id():
+    recorded: list[str] = []
+
+    def get_json(url, headers):
+        recorded.append(url)
+        q = dict(_query_pairs(url)).get("q")
+        if q == "DevOps":
+            return [
+                {"id": "1", "title": "DevOps", "company": "Alpha"},
+                {"id": "2", "title": "SRE", "company": "Beta"},
+            ]
+        if q == "Cloud Engineer":
+            return [
+                {"id": "2", "title": "SRE", "company": "Beta"},
+                {"id": "3", "title": "Cloud", "company": "Gamma"},
+            ]
+        return []
+
+    listings = poll_http_json(
+        {
+            "url": "https://landing.jobs/api/v1/offers",
+            "query": {"q": ["DevOps", "Cloud Engineer"]},
+            "max_items": 80,
+        },
+        get_json=get_json,
+    )
+    assert len(recorded) == 2
+    assert [dict(_query_pairs(u)).get("q") for u in recorded] == [
+        "DevOps",
+        "Cloud Engineer",
+    ]
+    assert [row.external_id for row in listings] == ["1", "2", "3"]
+
+
+def test_http_json_categories_list_is_one_get_repeated_keys():
+    recorded: list[str] = []
+
+    def get_json(url, headers):
+        recorded.append(url)
+        return {"data": []}
+
+    poll_http_json(
+        {
+            "url": "https://justjoin.it/api/candidate-api/offers",
+            "query": {"categories": ["devops", "python"], "itemsCount": "50"},
+            "items_path": "data",
+            "mapper": "justjoin",
+        },
+        get_json=get_json,
+    )
+    assert len(recorded) == 1
+    cats = [v for k, v in _query_pairs(recorded[0]) if k == "categories"]
+    assert cats == ["devops", "python"]
+
+
+def test_http_json_scalar_categories_and_string_q_are_not_sequences():
+    recorded: list[str] = []
+
+    def get_json(url, headers):
+        recorded.append(url)
+        return {"data": []}
+
+    poll_http_json(
+        {
+            "url": "https://justjoin.it/api/candidate-api/offers",
+            "query": {"categories": "devops", "itemsCount": "50"},
+            "items_path": "data",
+            "mapper": "justjoin",
+        },
+        get_json=get_json,
+    )
+    assert len(recorded) == 1
+    cats = [v for k, v in _query_pairs(recorded[0]) if k == "categories"]
+    assert cats == ["devops"]
+
+    recorded.clear()
+    poll_http_json(
+        {
+            "url": "https://landing.jobs/api/v1/offers",
+            "query": {"q": "DevOps"},
+        },
+        get_json=get_json,
+    )
+    assert len(recorded) == 1
+    qs = [v for k, v in _query_pairs(recorded[0]) if k == "q"]
+    assert qs == ["DevOps"]
+
+
 def test_remotive_profile_keeps_europe_drops_usa():
     listings = poll_http_json(
         {
@@ -260,6 +354,17 @@ def test_landing_jobs_profile_maps_contract_and_fte():
     fte = by_company["No Hire Inc"]
     assert fte.payload["engagement"] == "fte"
     assert fte.payload["location_country"] == "PT"
+
+
+def test_http_json_path_ignores_query_list():
+    listings = poll_http_json(
+        {
+            "profile": "landing_jobs",
+            "path": str(EXAMPLE / "fixtures" / "landing_jobs.json"),
+            "query": {"q": ["DevOps", "Cloud Engineer"]},
+        }
+    )
+    assert {row.company for row in listings} == {"Acme Radar", "No Hire Inc"}
 
 
 def test_http_json_max_items_and_justjoin_b2b_filter():

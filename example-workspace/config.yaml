@@ -101,6 +101,9 @@ knockouts:
   drop_on: []
 # Fictional adapters. http_json uses in-tree fixtures, not live boards.
 # Drop `path` on remotive-eu / landing-jobs-eu to poll the live GET APIs.
+# landing query.q as a list fans out one GET per term (union by external_id).
+# justjoin query.categories as a list is one GET with repeated categories= (OR).
+# Do not set query.q on justjoin or remotive.
 # imap_alerts stays disabled until secrets.env provides IMAP_* credentials.
 sources:
   - id: justjoin-sample
@@ -110,6 +113,7 @@ sources:
     config:
       profile: justjoin
       path: fixtures/justjoin.json
+      # Live: drop path; categories list → repeated categories= (one GET, OR).
   - id: remotive-eu
     kind: http_json
     name: Remotive EU / Europe remote IT
@@ -124,6 +128,7 @@ sources:
     config:
       profile: landing_jobs
       path: fixtures/landing_jobs.json
+      # Live: drop path; query.q list fans out one GET per term.
   - id: mail-alerts
     kind: imap_alerts
     name: Job alert mailbox
