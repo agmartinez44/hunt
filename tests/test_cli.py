@@ -184,6 +184,7 @@ def test_inbox_promote_is_explicit(workspace):
     assert "clears_floor" in widget["comp_derived"]
     table = _run(["inbox", "list"], env)
     assert "ROLE" in table.stdout
+    assert "SOURCE" in table.stdout
     assert "NET/MO" in table.stdout
     assert "WHY KEEP" in table.stdout
     assert "FLOOR" not in table.stdout

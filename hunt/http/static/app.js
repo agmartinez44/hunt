@@ -40,7 +40,7 @@
     </svg>`,
   };
   const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"];
-  const INBOX_COLS = ["Company", "Role", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
+  const INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
   const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
   const PROFILE_TABS = [
@@ -1149,6 +1149,7 @@
         return `<tr data-primitive="InboxRow" data-id="${esc(it.id)}">
           <td>${esc(it.company)}</td>
           <td>${PostingLink(it.url, role || "Posting")}</td>
+          <td>${esc(it.source_id || "")}</td>
           <td>${esc(locationOf(it))}</td>
           <td>${engagementCell(it)}</td>
           <td>${pay}</td>
@@ -1168,7 +1169,7 @@
           ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
           : NetEstimate(d);
         const role = it.role || it.title || "";
-        const meta = [locationOf(it), engagementOf(it)].filter(Boolean).join(" · ");
+        const meta = [it.source_id, locationOf(it), engagementOf(it)].filter(Boolean).join(" · ");
         const posting = it.url ? `<div>${PostingLink(it.url, "Posting")}</div>` : "";
         return `<article data-primitive="InboxRow" class="inbox-card">
           <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${pending ? CommandHint(`hunt inbox promote ${it.id} --json`) : ""}</span></div>
@@ -1190,7 +1191,7 @@
       badges,
       header +
         `<table data-primitive="DataTable" class="inbox-table">
-          <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Engagement</th><th>Net /mo</th><th>Why keep</th><th>Why risk</th><th>Age</th><th>Actions</th><th>Id</th></tr></thead>
+          <thead><tr><th>Company</th><th>Role</th><th>Source</th><th>Location</th><th>Engagement</th><th>Net /mo</th><th>Why keep</th><th>Why risk</th><th>Age</th><th>Actions</th><th>Id</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="inbox-cards">${cards}</div>`

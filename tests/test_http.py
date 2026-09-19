@@ -334,7 +334,8 @@ def test_ui_visual_followup_mira_agu7():
     assert "FloorBadge" not in js
     assert "<th>Floor</th>" not in js
     assert 'BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"]' in js
-    assert 'INBOX_COLS = ["Company", "Role", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
+    assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
+    assert "<th>Source</th>" in js
     assert "<th>Net /mo</th>" in js
     assert "<th>Floor</th>" not in js
     assert 'data-primitive="NetEstimate"' in js
@@ -635,6 +636,8 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert "data-inbox-knockout" in js
     assert "data-inbox-triage" in js
     assert "data-inbox-source" in js
+    assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
+    assert "<th>Source</th>" in js
     assert "[data-primitive=\"PostingLink\"]" in css
 
     parsed = _eval_parse_route(js, "/profile")
