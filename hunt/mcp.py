@@ -40,7 +40,13 @@ from hunt.core.facts import (
     update_project,
     update_skills,
 )
-from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
+from hunt.core.inbox import (
+    dismiss,
+    list_inbox,
+    promote,
+    restore,
+    serialize_inbox_item,
+)
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.worker import drain, run_one
@@ -130,6 +136,12 @@ TOOLS: list[dict[str, Any]] = [
         ["id"],
     ),
     _tool("inbox_dismiss", "Dismiss a pending inbox item", {"id": {"type": "string"}}, ["id"]),
+    _tool(
+        "inbox_restore",
+        "Restore a dismissed inbox item to pending (keep / restored).",
+        {"id": {"type": "string"}},
+        ["id"],
+    ),
     _tool(
         "jobs_list",
         "List jobs",
@@ -455,6 +467,9 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         return _ok({"application": app})
     if name == "inbox_dismiss":
         item = serialize_inbox_item(ws, dismiss(ws, arguments["id"]))
+        return _ok({"inbox_item": item})
+    if name == "inbox_restore":
+        item = serialize_inbox_item(ws, restore(ws, arguments["id"]))
         return _ok({"inbox_item": item})
     if name == "jobs_list":
         jobs = [

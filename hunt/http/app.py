@@ -57,7 +57,13 @@ from hunt.core.facts import (
     update_project,
     update_skills,
 )
-from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
+from hunt.core.inbox import (
+    dismiss,
+    list_inbox,
+    promote,
+    restore,
+    serialize_inbox_item,
+)
 from hunt.core.jobs import enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.workspace import Workspace, WorkspaceError, resolve_data_dir
@@ -336,6 +342,12 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def api_dismiss(item_id: str, _: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
             item = serialize_inbox_item(ws, dismiss(ws, item_id))
+        return {"inbox_item": item}
+
+    @app.post("/api/inbox/{item_id}/restore")
+    def api_restore(item_id: str, _: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            item = serialize_inbox_item(ws, restore(ws, item_id))
         return {"inbox_item": item}
 
     @app.get("/api/sources")

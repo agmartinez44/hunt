@@ -342,3 +342,28 @@ def test_pay_estimate_pl_fte_without_tax_home(workspace):
 
     _, restamp = _json(["pay", "restamp"], env)
     assert restamp["total"] >= 1
+
+
+def test_restore_sets_keep_restored(workspace):
+    data, env = workspace
+    with Workspace.open(data) as ws:
+        item = add_item(
+            ws,
+            company="Acme Radar",
+            title="Staff SWE",
+            why_risk="experience",
+            knockouts=["experience"],
+        )
+        item_id = item.id
+    pending = _run(["--json", "inbox", "restore", item_id], env, check=False)
+    assert pending.returncode != 0
+    _, dismissed = _json(["inbox", "dismiss", item_id], env)
+    assert dismissed["inbox_item"]["status"] == "dismissed"
+    _, restored = _json(["inbox", "restore", item_id], env)
+    row = restored["inbox_item"]
+    assert row["status"] == "pending"
+    assert row["triage"]["action"] == "keep"
+    assert row["triage"]["restored"] is True
+    assert row["triage"]["codes"] == ["experience"]
+    again = _run(["--json", "inbox", "restore", item_id], env, check=False)
+    assert again.returncode != 0

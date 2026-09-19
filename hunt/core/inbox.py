@@ -11,7 +11,7 @@ from typing import Any
 from hunt.core.applications import create_application, derive_for_workspace
 from hunt.core.errors import HuntError, NotFoundError, ValidationError
 from hunt.core.ids import new_id, now_iso
-from hunt.core.pay import QuotedPay, engagement_label
+from hunt.core.pay import QuotedPay, below_workspace_floor, engagement_label
 from hunt.core.workspace import Workspace
 
 INBOX_STATUSES = ("pending", "promoted", "dismissed")
@@ -21,6 +21,7 @@ INBOX_STATUSES = ("pending", "promoted", "dismissed")
 class InboxItem:
     id: str
     listing_id: str | None
+    source_id: str | None
     status: str
     company: str | None
     title: str | None
@@ -28,6 +29,7 @@ class InboxItem:
     why_keep: str | None
     why_risk: str | None
     knockouts: list[str]
+    triage: dict[str, Any] | None
     payload: dict[str, Any]
     application_id: str | None
     created_at: str
@@ -37,6 +39,7 @@ class InboxItem:
         return {
             "id": self.id,
             "listing_id": self.listing_id,
+            "source_id": self.source_id,
             "status": self.status,
             "company": self.company,
             "title": self.title,
@@ -44,6 +47,7 @@ class InboxItem:
             "why_keep": self.why_keep,
             "why_risk": self.why_risk,
             "knockouts": list(self.knockouts),
+            "triage": dict(self.triage) if self.triage else None,
             "payload": dict(self.payload),
             "application_id": self.application_id,
             "created_at": self.created_at,
@@ -102,11 +106,31 @@ def serialize_inbox_item(ws: Workspace, item: InboxItem) -> dict[str, Any]:
     data["engagement"] = payload.get("engagement")
     data["engagement_label"] = engagement_label(payload.get("engagement"))
     data["modality"] = payload.get("modality")
+    data["experience_level"] = payload.get("experience_level")
+    data["source_id"] = item.source_id
+    data["triage"] = item.triage
+    data["triage_json"] = item.triage
     data["comp_quoted"] = quoted.to_dict() if quoted else payload.get("comp_quoted")
     data["comp_derived"] = derived_dict
     data["net_month"] = derived.net_month if derived else None
+    data["clears_floor"] = derived.clears_floor if derived else None
+    data["below_floor"] = below_workspace_floor(ws, derived)
     data["display_currency"] = ws.display_currency
     return data
+
+
+def _parse_triage(raw: Any) -> dict[str, Any] | None:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _row_to_item(row) -> InboxItem:
@@ -115,6 +139,7 @@ def _row_to_item(row) -> InboxItem:
     return InboxItem(
         id=row["id"],
         listing_id=row["listing_id"],
+        source_id=row["source_id"],
         status=row["status"],
         company=row["company"],
         title=row["title"],
@@ -122,6 +147,7 @@ def _row_to_item(row) -> InboxItem:
         why_keep=row["why_keep"],
         why_risk=row["why_risk"],
         knockouts=knockouts if isinstance(knockouts, list) else [],
+        triage=_parse_triage(row["triage_json"]),
         payload=payload if isinstance(payload, dict) else {},
         application_id=row["application_id"],
         created_at=row["created_at"],
@@ -137,12 +163,14 @@ SELECT
     inbox_items.why_keep,
     inbox_items.why_risk,
     inbox_items.knockouts_json,
+    inbox_items.triage_json,
     inbox_items.application_id,
     inbox_items.created_at,
     inbox_items.updated_at,
     listings.company,
     listings.title,
     listings.url,
+    listings.source_id,
     listings.payload_json
 FROM inbox_items
 LEFT JOIN listings ON listings.id = inbox_items.listing_id
@@ -403,7 +431,7 @@ def promote(
     return app
 
 
-def dismiss(ws: Workspace, item_id: str) -> InboxItem:
+def dismiss(ws: Workspace, item_id: str, *, commit: bool = True) -> InboxItem:
     item = get_inbox_item(ws, item_id)
     if item.status != "pending":
         raise HuntError(f"inbox item {item_id} is {item.status}, not pending")
@@ -416,5 +444,33 @@ def dismiss(ws: Workspace, item_id: str) -> InboxItem:
         """,
         (now, item.id),
     )
-    ws.conn.commit()
-    return get_inbox_item(ws, item_id)
+    if commit:
+        ws.conn.commit()
+    return get_inbox_item(ws, item.id)
+
+
+def restore(ws: Workspace, item_id: str, *, commit: bool = True) -> InboxItem:
+    """Dismissed → pending. Marks triage keep/restored; codes stay for audit."""
+    item = get_inbox_item(ws, item_id)
+    if item.status != "dismissed":
+        raise HuntError(f"inbox item {item_id} is {item.status}, not dismissed")
+    now = now_iso()
+    triage = dict(item.triage or {})
+    triage["action"] = "keep"
+    triage["restored"] = True
+    triage["restored_at"] = now
+    if "codes" not in triage:
+        triage["codes"] = list(item.knockouts)
+    if not triage.get("reason") and item.why_risk:
+        triage["reason"] = item.why_risk
+    ws.conn.execute(
+        """
+        UPDATE inbox_items
+        SET status = 'pending', triage_json = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (json.dumps(triage), now, item.id),
+    )
+    if commit:
+        ws.conn.commit()
+    return get_inbox_item(ws, item.id)

@@ -41,6 +41,7 @@ from hunt.core.inbox import (
     dismiss,
     list_inbox,
     promote,
+    restore,
     serialize_inbox_item,
 )
 from hunt.core.jobs import Job, enqueue as enqueue_job, get_job, list_jobs
@@ -93,6 +94,7 @@ __all__ = [
     "list_projects",
     "list_sources",
     "promote",
+    "restore",
     "run_source",
     "update_achievement",
     "update_application",

@@ -641,6 +641,31 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert parsed["name"] == "notfound"
 
 
+def test_restore_sets_keep_restored(client):
+    http, data, _env = client
+    with Workspace.open(data) as ws:
+        item = add_item(
+            ws,
+            company="Acme Radar",
+            title="Staff SWE",
+            why_risk="experience",
+            knockouts=["experience"],
+        )
+        item_id = item.id
+    refused = http.post(f"/api/inbox/{item_id}/restore")
+    assert refused.status_code == 400
+    assert http.post(f"/api/inbox/{item_id}/dismiss").status_code == 200
+    restored = http.post(f"/api/inbox/{item_id}/restore")
+    assert restored.status_code == 200, restored.text
+    row = restored.json()["inbox_item"]
+    assert row["status"] == "pending"
+    assert row["triage"]["action"] == "keep"
+    assert row["triage"]["restored"] is True
+    assert row["triage"]["codes"] == ["experience"]
+    again = http.post(f"/api/inbox/{item_id}/restore")
+    assert again.status_code == 400
+
+
 def _eval_parse_route(js: str, pathname: str, search: str = ""):
     start = js.index("function parseRoute")
     end = js.index("function relative")

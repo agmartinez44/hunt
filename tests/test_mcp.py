@@ -51,6 +51,7 @@ def test_tools_list_covers_cli_nouns():
         "inbox_list",
         "inbox_promote",
         "inbox_dismiss",
+        "inbox_restore",
         "jobs_enqueue",
         "jobs_status",
         "jobs_run",
@@ -106,3 +107,31 @@ def test_mcp_promote_is_only_listing_path(data_dir: Path):
 
     assert not (ROOT / "store.sqlite").exists()
     assert not (ROOT / "attachments").exists()
+
+
+def test_restore_sets_keep_restored(data_dir: Path):
+    from hunt.core.inbox import add_item
+    from hunt.core.workspace import Workspace
+
+    with Workspace.open(data_dir) as ws:
+        item = add_item(
+            ws,
+            company="Acme Radar",
+            title="Staff SWE",
+            why_risk="experience",
+            knockouts=["experience"],
+        )
+        item_id = item.id
+    err, payload = _call("inbox_restore", {"id": item_id}, data_dir)
+    assert err["isError"] is True
+    _, dismissed = _call("inbox_dismiss", {"id": item_id}, data_dir)
+    assert dismissed["inbox_item"]["status"] == "dismissed"
+    _, restored = _call("inbox_restore", {"id": item_id}, data_dir)
+    row = restored["inbox_item"]
+    assert row["status"] == "pending"
+    assert row["triage"]["action"] == "keep"
+    assert row["triage"]["restored"] is True
+    assert row["triage"]["codes"] == ["experience"]
+    err, payload = _call("inbox_restore", {"id": item_id}, data_dir)
+    assert err["isError"] is True
+    assert "dismissed" in payload["error"]

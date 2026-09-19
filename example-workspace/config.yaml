@@ -74,8 +74,14 @@ agent:
     api_key_env: XAI_API_KEY
     model: grok-4.5
 # Workspace knockouts (data, not hardcoded in Hunt). Missing pay → pay_unknown.
+# title_exclude is phrase-substring (same as title_include). Lists stay empty here
+# so merging this tree cannot dismiss live rows. Do not use bare intern as a token
+# — it matches Polish internetowej. Phrase tokens (live YAML, not this file):
+# internship, "intern " (prefix), " intern " (both spaces). Not " intern".
 knockouts:
   title_include: []
+  title_exclude: []
+  experience_block: []
   modality_block: []
   engagement_allow: []
   languages_block: []

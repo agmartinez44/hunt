@@ -46,7 +46,13 @@ from hunt.core.facts import (
     update_project,
     update_skills,
 )
-from hunt.core.inbox import dismiss, list_inbox, promote, serialize_inbox_item
+from hunt.core.inbox import (
+    dismiss,
+    list_inbox,
+    promote,
+    restore,
+    serialize_inbox_item,
+)
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
 from hunt.core.worker import drain, run_one
@@ -310,6 +316,15 @@ def cmd_inbox_promote(args: argparse.Namespace) -> None:
 def cmd_inbox_dismiss(args: argparse.Namespace) -> None:
     with _open(args) as ws:
         item = serialize_inbox_item(ws, dismiss(ws, args.id))
+    if args.json:
+        _dump_json({"inbox_item": item})
+        return
+    print_kv(item)
+
+
+def cmd_inbox_restore(args: argparse.Namespace) -> None:
+    with _open(args) as ws:
+        item = serialize_inbox_item(ws, restore(ws, args.id))
     if args.json:
         _dump_json({"inbox_item": item})
         return
@@ -1127,6 +1142,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_dismiss = inbox_verbs.add_parser("dismiss", help="Dismiss a pending inbox item")
     p_dismiss.add_argument("id")
     p_dismiss.set_defaults(func=cmd_inbox_dismiss)
+
+    p_restore = inbox_verbs.add_parser(
+        "restore", help="Restore a dismissed inbox item to pending"
+    )
+    p_restore.add_argument("id")
+    p_restore.set_defaults(func=cmd_inbox_restore)
 
     artifacts = nouns.add_parser("artifacts", help="Application files")
     art_verbs = artifacts.add_subparsers(dest="verb", required=True)

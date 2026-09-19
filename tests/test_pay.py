@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import pytest
 
-from hunt.core.pay import QuotedPay, derive_pay, engagement_label, estimate_pay, normalize_engagement
+from hunt.core.pay import (
+    QuotedPay,
+    below_workspace_floor,
+    derive_pay,
+    engagement_label,
+    estimate_pay,
+    floor_month_for_workspace,
+    normalize_engagement,
+)
+from hunt.core.workspace import Workspace
+
+ROOT = Path(__file__).resolve().parent.parent
+EXAMPLE = ROOT / "example-workspace"
 
 FX = {"USD": 0.90, "EUR": 1.0, "PLN": 0.23, "CHF": 1.05}
 FLOOR = {"amount": 7000, "currency": "EUR", "unit": "month"}
@@ -258,3 +273,48 @@ def test_year_quote_uses_160h_months():
     assert derived.month == 8000.0
     assert derived.hour == 50.0
     assert derived.day == 400.0
+
+
+@pytest.fixture
+def workspace(tmp_path: Path):
+    data = tmp_path / "workspace"
+    shutil.copytree(EXAMPLE, data, ignore=shutil.ignore_patterns("attachments"))
+    return data
+
+
+def test_floor_month_for_workspace_ignores_tax_cell(workspace):
+    with Workspace.open(workspace) as ws:
+        assert floor_month_for_workspace(ws) == 7000.0
+        quoted = QuotedPay(amount=22000, currency="PLN", unit="month")
+        estimate = estimate_pay(
+            quoted,
+            display_currency=ws.display_currency,
+            fx_as_of=ws.fx_as_of,
+            fx_rates=ws.fx_rates,
+            hours_per_month=ws.hours_per_month,
+            country=None,
+            engagement=None,
+            tax_homes=ws.tax_homes,
+            comp_floor=ws.comp_floor,
+        )
+        assert estimate["assumptions"].get("floor_month") is None
+        derived = derive_pay(
+            quoted,
+            display_currency=ws.display_currency,
+            fx_as_of=ws.fx_as_of,
+            fx_rates=ws.fx_rates,
+            hours_per_month=ws.hours_per_month,
+            country=None,
+            engagement=None,
+            tax_homes=ws.tax_homes,
+            comp_floor=ws.comp_floor,
+        )
+        assert derived is not None
+        # 22000 PLN × 0.23 via hour rounding: 31.62 × 160 = 5059.20 EUR/month
+        assert derived.month == 5059.2
+        assert derived.month < 7000
+        assert derived.clears_floor is None
+        assert below_workspace_floor(ws, derived) is True
+        ws.config["tax_homes"] = {}
+        assert floor_month_for_workspace(ws) == 7000.0
+        assert below_workspace_floor(ws, derived) is True

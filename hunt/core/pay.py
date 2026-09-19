@@ -16,7 +16,10 @@ agents.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from hunt.core.workspace import Workspace
 
 HOURS_PER_DAY = 8.0
 DEFAULT_HOURS_PER_MONTH = 160.0
@@ -184,6 +187,38 @@ def _floor_month(
     if unit == "day":
         return _money(display_amount / HOURS_PER_DAY * hours_per_month)
     return None
+
+
+def floor_month_for_workspace(ws: Workspace) -> float | None:
+    """Workspace comp_floor in display-currency / month, or None if floor/FX missing.
+
+    Wraps ``_floor_month`` (comp_floor + FX only). Does not read
+    ``assumptions.floor_month`` and does not need a tax cell.
+    """
+    return _floor_month(
+        ws.comp_floor,
+        display_currency=ws.display_currency,
+        rates=ws.fx_rates,
+        hours_per_month=ws.hours_per_month,
+    )
+
+
+def below_workspace_floor(ws: Workspace, derived: DerivedPay | None) -> bool:
+    """True when Hunt can prove quoted gross (or net) is below the workspace floor.
+
+    Never true when quote or FX is missing (derived is None).
+    ``clears_floor is None`` is not a veto when stamped gross month is below floor.
+    Gross uses the same 'below' as net: not ``>=`` floor, i.e. ``month < floor``.
+    Exact equality (gross month == floor) does **not** fire ``pay_below_floor``.
+    """
+    if derived is None:
+        return False
+    if derived.clears_floor is False:
+        return True
+    floor = floor_month_for_workspace(ws)
+    if derived.month is not None and floor is not None and derived.month < floor:
+        return True
+    return False
 
 
 def normalize_country(value: str | None) -> str | None:

@@ -93,6 +93,7 @@ def upsert_listing(
                 "location_city",
                 "location_country",
                 "comp_quoted",
+                "experience_level",
             ):
                 if not body.get(key) and old.get(key) not in (None, ""):
                     body[key] = old[key]

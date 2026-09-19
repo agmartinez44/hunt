@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     why_keep TEXT,
     why_risk TEXT,
     knockouts_json TEXT NOT NULL DEFAULT '[]',
+    triage_json TEXT,
     application_id TEXT REFERENCES applications(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -160,6 +161,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE jobs ADD COLUMN result_json TEXT NOT NULL DEFAULT '{}'"
         )
+    inbox_cols = _columns(conn, "inbox_items")
+    if "triage_json" not in inbox_cols:
+        conn.execute("ALTER TABLE inbox_items ADD COLUMN triage_json TEXT")
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_source_external
