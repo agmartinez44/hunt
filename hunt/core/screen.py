@@ -8,7 +8,13 @@ import json
 
 from hunt.adapters.linkedin_alert import parse_subject
 from hunt.core.applications import derive_for_workspace
-from hunt.core.inbox import add_inbox_for_listing, dismiss, refresh_inbox_for_listing
+from hunt.core.inbox import (
+    add_inbox_for_listing,
+    count_pending,
+    dismiss,
+    pending_cap,
+    refresh_inbox_for_listing,
+)
 from hunt.core.listings import (
     Listing,
     apply_stated_engagement,
@@ -334,6 +340,14 @@ def screen_listing(ws: Workspace, listing: Listing) -> dict[str, Any]:
             "inbox_id": existing["id"],
             "knockouts": layer1,
         }
+    cap = pending_cap(ws)
+    if cap and count_pending(ws) >= cap:
+        return {
+            "listing_id": listing.id,
+            "dropped": False,
+            "skipped_cap": True,
+            "knockouts": layer1,
+        }
     item = add_inbox_for_listing(
         ws,
         listing.id,
@@ -356,12 +370,15 @@ def screen_inbox(ws: Workspace) -> dict[str, Any]:
     screened = 0
     refreshed = 0
     dismissed = 0
+    skipped_cap = 0
     backfill_engagement(ws, commit=False)
     for listing in list_listings(ws):
         screened += 1
         result = screen_listing(ws, listing)
         if result.get("dropped"):
             dropped += 1
+        elif result.get("skipped_cap"):
+            skipped_cap += 1
         elif result.get("dismissed"):
             dismissed += 1
         elif result.get("refreshed"):
@@ -377,4 +394,5 @@ def screen_inbox(ws: Workspace) -> dict[str, Any]:
         "dropped": dropped,
         "refreshed": refreshed,
         "dismissed": dismissed,
+        "skipped_cap": skipped_cap,
     }

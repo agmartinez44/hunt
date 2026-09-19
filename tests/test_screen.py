@@ -721,3 +721,48 @@ def test_upsert_preserves_experience_level(workspace):
         assert created is False
         assert updated.id == listing.id
         assert updated.payload.get("experience_level") == "mid"
+
+
+def test_pending_cap_skips_add_not_drop_on_and_fills_oldest_pass(workspace):
+    data, _env = workspace
+    path = data / "config.yaml"
+    cfg = yaml.safe_load(path.read_text()) or {}
+    cfg.setdefault("inbox", {})["pending_cap"] = 1
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    _write_knockouts(data, title_exclude=["intern "], drop_on=["title_exclude"])
+    with Workspace.open(data) as ws:
+        intern = _listing(
+            ws,
+            external_id="old-intern",
+            title="intern SWE",
+            company="Old Co",
+            payload=dict(HIGH_PAY),
+        )
+        newer = _listing(
+            ws,
+            external_id="new-staff",
+            title="Staff SWE",
+            company="New Co",
+            payload=dict(HIGH_PAY),
+        )
+        ws.conn.execute(
+            "UPDATE listings SET created_at = ? WHERE id = ?",
+            ("2026-01-01T00:00:00Z", intern.id),
+        )
+        ws.conn.execute(
+            "UPDATE listings SET created_at = ? WHERE id = ?",
+            ("2026-01-02T00:00:00Z", newer.id),
+        )
+        ws.conn.commit()
+        out = screen_inbox(ws)
+        intern_inbox = ws.conn.execute(
+            "SELECT id FROM inbox_items WHERE listing_id = ?", (intern.id,)
+        ).fetchone()
+        newer_item = ws.conn.execute(
+            "SELECT id, status FROM inbox_items WHERE listing_id = ?", (newer.id,)
+        ).fetchone()
+    assert intern_inbox is None
+    assert newer_item["status"] == "pending"
+    assert out["dropped"] == 1
+    assert out["inbox_added"] == 1
+    assert out["skipped_cap"] == 0

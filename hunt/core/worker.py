@@ -16,6 +16,7 @@ from hunt.core.jobs import (
     finish_job,
     list_jobs,
 )
+from hunt.core.inbox import count_pending, pending_cap
 from hunt.core.listings import upsert_listing
 from hunt.core.screen import screen_inbox
 from hunt.core.sources import get_source, mark_status
@@ -88,12 +89,17 @@ def _run_source_poll(ws: Workspace, job: Job) -> dict[str, Any]:
         raise
     knockouts = screen_inbox(ws)
     triage_job = enqueue_triage_if_needed(ws, skip_if_idle=True)
+    cap = pending_cap(ws)
+    pending_at_end = count_pending(ws)
+    skipped_cap_n = int(knockouts.get("skipped_cap") or 0)
     result = {
         "source_id": source.id,
         "kind": source.kind,
         "listings": len(fetched),
         "new": created,
         "knockouts": knockouts,
+        "skipped": "cap" if cap and skipped_cap_n > 0 else None,
+        "at_cap": bool(cap) and pending_at_end >= cap,
         "triage_job_id": triage_job.id if triage_job else None,
         "screener": _poll_screener(ws, triage_job),
     }

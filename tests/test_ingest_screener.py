@@ -44,6 +44,30 @@ def _enable_poll_triage(data: Path) -> None:
     path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
 
+def _set_pending_cap(data: Path, cap: int) -> None:
+    path = data / "config.yaml"
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg.setdefault("inbox", {})["pending_cap"] = cap
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+
+
+def _n_listings(n: int) -> list[RawListing]:
+    return [
+        RawListing(
+            external_id=f"ext-{i}",
+            title="Staff SRE",
+            company=f"Acme {i}",
+            url=f"https://example.test/jobs/{i}",
+            payload={
+                "engagement": "b2b",
+                "modality": "remote",
+                "comp_quoted": {"amount": 50.0, "currency": "USD", "unit": "hour"},
+            },
+        )
+        for i in range(n)
+    ]
+
+
 def _fake_listing(source_id: str) -> RawListing:
     return RawListing(
         external_id=f"{source_id}-ext-1",
@@ -120,6 +144,80 @@ def test_wake_without_harness_does_not_fail_ingest(workspace, tmp_path):
     assert out["started"] is False
     assert out["reason"] == "no_harness"
     assert out["never_apply"] is True
+
+
+def test_pending_cap_one_blocks_second_listing(workspace, monkeypatch):
+    _set_pending_cap(workspace, 1)
+
+    def fake_poll(ws, source, **kwargs):
+        return _n_listings(2)
+
+    monkeypatch.setattr("hunt.adapters.poll_source", fake_poll)
+    with Workspace.open(workspace) as ws:
+        list_sources(ws)
+        job = enqueue(ws, job_type="source-poll", target_id="justjoin-sample")
+        out = run_one(ws, job.id)
+        pending = ws.conn.execute(
+            "SELECT COUNT(*) AS n FROM inbox_items WHERE status = 'pending'"
+        ).fetchone()["n"]
+        listings = ws.conn.execute("SELECT COUNT(*) AS n FROM listings").fetchone()["n"]
+        no_inbox = ws.conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM listings
+            LEFT JOIN inbox_items ON inbox_items.listing_id = listings.id
+            WHERE inbox_items.id IS NULL
+            """
+        ).fetchone()["n"]
+
+    assert out["job"]["state"] == "done"
+    assert listings == 2
+    assert pending == 1
+    assert no_inbox == 1
+    assert out["result"]["knockouts"]["skipped_cap"] >= 1
+    assert out["result"]["skipped"] == "cap"
+
+
+def test_pending_cap_fill_to_cap_sets_at_cap_without_skipped(workspace, monkeypatch):
+    _set_pending_cap(workspace, 2)
+
+    def fake_poll(ws, source, **kwargs):
+        return _n_listings(2)
+
+    monkeypatch.setattr("hunt.adapters.poll_source", fake_poll)
+    with Workspace.open(workspace) as ws:
+        list_sources(ws)
+        job = enqueue(ws, job_type="source-poll", target_id="justjoin-sample")
+        out = run_one(ws, job.id)
+        pending = ws.conn.execute(
+            "SELECT COUNT(*) AS n FROM inbox_items WHERE status = 'pending'"
+        ).fetchone()["n"]
+
+    assert pending == 2
+    assert out["result"]["knockouts"]["inbox_added"] == 2
+    assert out["result"]["knockouts"]["skipped_cap"] == 0
+    assert out["result"]["skipped"] is None
+    assert out["result"]["at_cap"] is True
+
+
+def test_pending_cap_zero_is_unlimited(workspace, monkeypatch):
+    _set_pending_cap(workspace, 0)
+
+    def fake_poll(ws, source, **kwargs):
+        return _n_listings(2)
+
+    monkeypatch.setattr("hunt.adapters.poll_source", fake_poll)
+    with Workspace.open(workspace) as ws:
+        list_sources(ws)
+        job = enqueue(ws, job_type="source-poll", target_id="justjoin-sample")
+        out = run_one(ws, job.id)
+        pending = ws.conn.execute(
+            "SELECT COUNT(*) AS n FROM inbox_items WHERE status = 'pending'"
+        ).fetchone()["n"]
+
+    assert pending == 2
+    assert out["result"]["knockouts"]["inbox_added"] == 2
+    assert out["result"]["skipped"] is None
+    assert out["result"]["at_cap"] is False
 
 
 @pytest.mark.parametrize("source_id,kind", [("justjoin-sample", "http_json"), ("mail-alerts", "imap_alerts")])

@@ -15,6 +15,26 @@ from hunt.core.pay import QuotedPay, below_workspace_floor, engagement_label
 from hunt.core.workspace import Workspace
 
 INBOX_STATUSES = ("pending", "promoted", "dismissed")
+DEFAULT_PENDING_CAP = 200
+
+
+def pending_cap(ws: Workspace) -> int:
+    """Positive cap; missing → 200; ``0`` is unlimited (falsy, never ``pending >= 0``)."""
+    inbox = ws.config.get("inbox")
+    if not isinstance(inbox, dict) or "pending_cap" not in inbox:
+        return DEFAULT_PENDING_CAP
+    raw = inbox.get("pending_cap")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_PENDING_CAP
+
+
+def count_pending(ws: Workspace) -> int:
+    row = ws.conn.execute(
+        "SELECT COUNT(*) AS n FROM inbox_items WHERE status = 'pending'"
+    ).fetchone()
+    return int(row["n"] if row else 0)
 
 
 @dataclass

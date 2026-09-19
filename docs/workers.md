@@ -13,6 +13,12 @@ ignores `enabled` (live-test). Layer 3 (`hunt agent run screener`) wakes
 only from `triage-inbox` on that job's keep+unsure. Paperclip is optional
 and is not this path. Hunt never applies or sends mail.
 
+`inbox.pending_cap` (default 200; `0` means unlimited) caps global pending
+inbox rows. Source-poll still GETs and upserts listings at cap; it does not
+add a new pending row. Poll result `skipped` is `"cap"` only when a positive
+cap blocked at least one add (`knockouts.skipped_cap > 0`). `at_cap` is true
+when pending at end is at or above that positive cap.
+
 `config.yaml`:
 
 ```yaml

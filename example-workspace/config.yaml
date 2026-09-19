@@ -61,6 +61,8 @@ tax_homes:
       source: "example 2026 JDG ryczałt 12% IT + ZUS lump; VAT-out for B2B quotes"
 worker:
   backend: none
+inbox:
+  pending_cap: 200
 cv:
   filename_pattern: "{name}_CV"
 # Default runner is a harness you already run (OpenCode / Claude / Codex).
