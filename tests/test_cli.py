@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from hunt.core.inbox import add_item
+from hunt.core.sources import list_sources
 from hunt.core.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -367,3 +368,31 @@ def test_restore_sets_keep_restored(workspace):
     assert row["triage"]["codes"] == ["experience"]
     again = _run(["--json", "inbox", "restore", item_id], env, check=False)
     assert again.returncode != 0
+
+
+def test_inbox_list_source_knockout_triage_flags(workspace):
+    data, env = workspace
+    with Workspace.open(data) as ws:
+        list_sources(ws)
+        add_item(
+            ws,
+            company="Floor Co",
+            title="Role A",
+            source_id="justjoin-sample",
+            knockouts=["pay_below_floor"],
+            external_id="floor-1",
+        )
+        add_item(
+            ws,
+            company="Other Co",
+            title="Role B",
+            source_id="remotive-eu",
+            knockouts=["title"],
+            external_id="other-1",
+        )
+    _, by_source = _json(["inbox", "list", "--source", "justjoin-sample"], env)
+    assert [row["company"] for row in by_source["inbox"]] == ["Floor Co"]
+    _, floor = _json(
+        ["inbox", "list", "--knockout", "pay_below_floor|below_floor"], env
+    )
+    assert [row["company"] for row in floor["inbox"]] == ["Floor Co"]

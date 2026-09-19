@@ -272,7 +272,16 @@ def cmd_applications_update(args: argparse.Namespace) -> None:
 def cmd_inbox_list(args: argparse.Namespace) -> None:
     status = args.status
     with _open(args) as ws:
-        items = [serialize_inbox_item(ws, i) for i in list_inbox(ws, status=status)]
+        items = [
+            serialize_inbox_item(ws, i)
+            for i in list_inbox(
+                ws,
+                status=status,
+                source_id=args.source,
+                knockout=args.knockout,
+                triage_action=args.triage,
+            )
+        ]
     if args.json:
         _dump_json({"inbox": items})
         return
@@ -285,6 +294,8 @@ def cmd_inbox_list(args: argparse.Namespace) -> None:
                 "location": i.get("location") or "",
                 "engagement": i.get("engagement_label") or i.get("engagement") or "",
                 "net_month": _derived_net(i),
+                "triage": ((i.get("triage") or {}) or {}).get("action") or "",
+                "knockouts": ", ".join(i.get("knockouts") or []),
                 "why_keep": i.get("why_keep") or "",
                 "why_risk": i.get("why_risk") or "",
             }
@@ -297,6 +308,8 @@ def cmd_inbox_list(args: argparse.Namespace) -> None:
             ("location", "LOCATION"),
             ("engagement", "ENGAGEMENT"),
             ("net_month", "NET/MO"),
+            ("triage", "TRIAGE"),
+            ("knockouts", "KNOCKOUTS"),
             ("why_keep", "WHY KEEP"),
             ("why_risk", "WHY RISK"),
         ],
@@ -1130,6 +1143,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_in_list = inbox_verbs.add_parser("list", help="List inbox items")
     p_in_list.add_argument("--status", default="pending")
+    p_in_list.add_argument("--source", help="Filter by listings.source_id")
+    p_in_list.add_argument("--knockout", help="Filter by knockout code (use | for OR)")
+    p_in_list.add_argument(
+        "--triage",
+        choices=["dismiss", "keep", "unsure"],
+        help="Filter by Layer 2 triage action",
+    )
     p_in_list.set_defaults(func=cmd_inbox_list)
 
     p_promote = inbox_verbs.add_parser(

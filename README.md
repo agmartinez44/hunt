@@ -33,6 +33,8 @@ export HUNT_DATA=/tmp/hunt-data-jane
 .venv/bin/hunt --json achievements get wc-gitops
 .venv/bin/hunt --json sources run justjoin-sample --run
 .venv/bin/hunt --json jobs enqueue --type screen-inbox --run
+.venv/bin/hunt --json jobs enqueue --type triage-inbox --run
+.venv/bin/hunt --json inbox list --triage keep
 .venv/bin/hunt inbox list
 .venv/bin/hunt serve            # FastAPI + UI on 127.0.0.1:8787
 .venv/bin/hunt-cv render

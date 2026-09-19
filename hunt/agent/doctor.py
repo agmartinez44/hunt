@@ -18,10 +18,14 @@ from hunt.agent.config import (
     RECORD_NAME,
     ROLE_PACKS,
     agent_model,
+    agent_triage_model,
+    api_key_for,
     is_local_base_url,
     models_url,
     small_local_warning,
+    triage_auto_dismiss,
 )
+from hunt.core.errors import HuntError
 
 LAST_DOCTOR = "agent-doctor.json"
 CHECK_LABELS = {
@@ -354,7 +358,10 @@ def doctor(
         )
     )
     warn = small_local_warning(
-        model["model"], model["base_url"], ping.get("models") or []
+        model["model"],
+        model["base_url"],
+        ping.get("models") or [],
+        role="screener",
     )
     if warn:
         warnings.append(warn)
@@ -365,6 +372,44 @@ def doctor(
                 warn,
                 severity="note",
                 label=CHECK_LABELS["quality"],
+            )
+        )
+
+    try:
+        tmodel = agent_triage_model(ws)
+        tkey = api_key_for(ws, tmodel)
+        tping = ping_models(tmodel["base_url"], tkey, timeout=timeout)
+        checks.append(
+            _check(
+                "triage_model",
+                True,
+                f"{tping['url']} — {tping['detail']}",
+                url=tping["url"],
+                models=tping.get("models") or [],
+                label=f"Layer 2 triage {tmodel['model']} is local",
+            )
+        )
+        small_local_warning(
+            tmodel["model"],
+            tmodel["base_url"],
+            tping.get("models") or [],
+            role="triage",
+        )
+    except HuntError as exc:
+        message = str(exc)
+        hosted = "refuses hosted URL" in message or "api.x.ai" in message
+        missing = "missing" in message.lower()
+        fail = hosted or (missing and triage_auto_dismiss(ws))
+        checks.append(
+            _check(
+                "triage_model",
+                not fail,
+                message,
+                label=(
+                    "Layer 2 triage URL must be local Gemma"
+                    if fail
+                    else message
+                ),
             )
         )
 

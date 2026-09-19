@@ -178,7 +178,12 @@ LEFT JOIN listings ON listings.id = inbox_items.listing_id
 
 
 def list_inbox(
-    ws: Workspace, *, status: str | None = "pending"
+    ws: Workspace,
+    *,
+    status: str | None = "pending",
+    source_id: str | None = None,
+    knockout: str | None = None,
+    triage_action: str | None = None,
 ) -> list[InboxItem]:
     if status and status != "all":
         if status not in INBOX_STATUSES:
@@ -193,7 +198,24 @@ def list_inbox(
         rows = ws.conn.execute(
             _SELECT + " ORDER BY inbox_items.created_at DESC"
         ).fetchall()
-    return [_row_to_item(r) for r in rows]
+    items = [_row_to_item(r) for r in rows]
+    if source_id:
+        items = [item for item in items if item.source_id == source_id]
+    if knockout:
+        codes = {part.strip() for part in str(knockout).split("|") if part.strip()}
+        items = [item for item in items if codes & set(item.knockouts)]
+    if triage_action:
+        allowed = {"dismiss", "keep", "unsure"}
+        if triage_action not in allowed:
+            raise ValidationError(
+                f"inbox triage must be one of {sorted(allowed)}"
+            )
+        items = [
+            item
+            for item in items
+            if (item.triage or {}).get("action") == triage_action
+        ]
+    return items
 
 
 def get_inbox_item(ws: Workspace, item_id: str) -> InboxItem:

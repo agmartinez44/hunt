@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -169,6 +169,13 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_source_external
         ON listings(source_id, external_id)
         WHERE source_id IS NOT NULL AND external_id IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_triage_inbox_active
+        ON jobs(type)
+        WHERE type = 'triage-inbox' AND state IN ('queued', 'running')
         """
     )
     row = conn.execute(

@@ -128,7 +128,16 @@ TOOLS: list[dict[str, Any]] = [
         {"id": {"type": "string"}, **APP_PROPS},
         ["id"],
     ),
-    _tool("inbox_list", "List inbox items", {"status": {"type": "string"}}),
+    _tool(
+        "inbox_list",
+        "List inbox items. Filter with status, source, knockout, triage (keep|unsure|dismiss).",
+        {
+            "status": {"type": "string"},
+            "source": {"type": "string"},
+            "knockout": {"type": "string"},
+            "triage": {"type": "string"},
+        },
+    ),
     _tool(
         "inbox_promote",
         "Promote a pending inbox item to an application. This is the only listing → application path.",
@@ -153,12 +162,13 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool(
         "jobs_enqueue",
-        "Enqueue source-poll, screen-inbox, or tailor-cv. Never apply/send.",
+        "Enqueue source-poll, screen-inbox, triage-inbox, or tailor-cv. Never apply/send.",
         {
             "type": {"type": "string", "enum": list(JOB_TYPES)},
             "target_id": {"type": "string"},
             "emphasis": {"type": "string"},
             "variant": {"type": "string"},
+            "force": {"type": "boolean"},
             "run": {"type": "boolean"},
         },
         ["type"],
@@ -458,7 +468,16 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         return _ok({"application": app})
     if name == "inbox_list":
         status = arguments.get("status", "pending")
-        items = [serialize_inbox_item(ws, i) for i in list_inbox(ws, status=status)]
+        items = [
+            serialize_inbox_item(ws, i)
+            for i in list_inbox(
+                ws,
+                status=status,
+                source_id=arguments.get("source"),
+                knockout=arguments.get("knockout"),
+                triage_action=arguments.get("triage"),
+            )
+        ]
         return _ok({"inbox": items})
     if name == "inbox_promote":
         item_id = arguments["id"]
@@ -489,6 +508,8 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
             payload["emphasis"] = arguments["emphasis"]
         if arguments.get("variant"):
             payload["variant"] = arguments["variant"]
+        if arguments.get("force"):
+            payload["force"] = True
         job = enqueue_job(
             ws,
             job_type=job_type,

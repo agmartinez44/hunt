@@ -1,15 +1,17 @@
 # Workers
 
-Hunt stores jobs in SQLite (`source-poll`, `screen-inbox`, `tailor-cv`).
-HTTP, CLI, and MCP only enqueue. Something has to **claim** `queued` rows.
+Hunt stores jobs in SQLite (`source-poll`, `screen-inbox`, `triage-inbox`,
+`tailor-cv`). HTTP, CLI, and MCP only enqueue. Something has to **claim**
+`queued` rows.
 
-After `source-poll` finishes, Hunt runs in-process `screen-inbox`
-knockouts (no LLM). If that poll created listings (`new > 0`), it starts
-the installed screener harness — the same command as
-`hunt agent run screener` — without waiting for a clock. `new == 0`
-skips the LLM. IMAP can stay on a cheap poll; HTTP sources can too; the
-LLM is event-driven off ingest. Paperclip is optional and is not this
-path. Hunt never applies or sends mail.
+After `source-poll` finishes, Hunt runs in-process Layer 1 knockouts (no
+LLM). It does **not** start the screener harness. If `agent.triage.enabled`
+is true, `drop_on` is nonempty, and untriaged pending remains, poll
+enqueues at most one `triage-inbox`. Missing `enabled` is false, so cron
+cannot auto-run Gemma. Operator `hunt jobs enqueue --type triage-inbox`
+ignores `enabled` (live-test). Layer 3 (`hunt agent run screener`) wakes
+only from `triage-inbox` on that job's keep+unsure. Paperclip is optional
+and is not this path. Hunt never applies or sends mail.
 
 `config.yaml`:
 
@@ -24,6 +26,7 @@ Jobs stay queued until you run them:
 
 ```bash
 hunt --json jobs enqueue --type screen-inbox --run
+hunt --json jobs enqueue --type triage-inbox --run
 hunt --json jobs run              # next queued
 hunt --json jobs run "$JOB_ID"
 hunt --json jobs worker           # drain the queue once

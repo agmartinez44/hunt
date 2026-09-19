@@ -68,6 +68,13 @@ def test_tools_list_covers_cli_nouns():
         "integrity_get",
     ):
         assert required in names
+    enqueue = next(t for t in reply["result"]["tools"] if t["name"] == "jobs_enqueue")
+    enum = enqueue["inputSchema"]["properties"]["type"]["enum"]
+    assert "triage-inbox" in enum
+    assert "force" in enqueue["inputSchema"]["properties"]
+    inbox = next(t for t in reply["result"]["tools"] if t["name"] == "inbox_list")
+    props = inbox["inputSchema"]["properties"]
+    assert "source" in props and "knockout" in props and "triage" in props
 
 
 def test_mcp_promote_is_only_listing_path(data_dir: Path):
@@ -76,7 +83,7 @@ def test_mcp_promote_is_only_listing_path(data_dir: Path):
     )
     assert poll["job"]["state"] == "done"
     assert poll["result"]["knockouts"]["inbox_added"] == 2
-    assert poll["result"]["screener"]["triggered"] is True
+    assert poll["result"]["screener"]["triggered"] is False
     _, apps = _call("applications_list", {}, data_dir)
     assert apps["applications"] == []
 

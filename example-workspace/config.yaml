@@ -73,6 +73,19 @@ agent:
     base_url: https://api.x.ai/v1
     api_key_env: XAI_API_KEY
     model: grok-4.5
+  triage:
+    enabled: false
+    auto_dismiss: true
+    batch_size: 8
+    max_cards: 8
+    reason_max_chars: 80
+    wake_min_survivors: 1
+    keep_hint: ""
+    geo_hint: ""
+    model:
+      base_url: http://127.0.0.1:8080/v1
+      api_key_env: ""
+      model: gemma-4-E4B
 # Workspace knockouts (data, not hardcoded in Hunt). Missing pay → pay_unknown.
 # title_exclude is phrase-substring (same as title_include). Lists stay empty here
 # so merging this tree cannot dismiss live rows. Do not use bare intern as a token

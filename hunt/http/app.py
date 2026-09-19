@@ -318,10 +318,23 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/api/inbox")
     def api_list_inbox(
-        status: str | None = "pending", _: None = Depends(require_auth)
+        status: str | None = "pending",
+        source: str | None = None,
+        knockout: str | None = None,
+        triage: str | None = None,
+        _: None = Depends(require_auth),
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            items = [serialize_inbox_item(ws, i) for i in list_inbox(ws, status=status)]
+            items = [
+                serialize_inbox_item(ws, i)
+                for i in list_inbox(
+                    ws,
+                    status=status,
+                    source_id=source,
+                    knockout=knockout,
+                    triage_action=triage,
+                )
+            ]
         return {"inbox": items}
 
     @app.post("/api/inbox/{item_id}/promote")

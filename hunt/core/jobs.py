@@ -1,12 +1,13 @@
 """Job queue. HTTP/CLI/MCP enqueue the same rows; workers claim them.
 
-v1 types: source-poll, screen-inbox, tailor-cv. Hunt never enqueues apply
-or send-mail.
+v1 types: source-poll, screen-inbox, triage-inbox, tailor-cv. Hunt never
+enqueues apply or send-mail.
 """
 
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,7 +17,8 @@ from hunt.core.events import append_event
 from hunt.core.ids import new_id, now_iso
 from hunt.core.workspace import Workspace
 
-JOB_TYPES = ("source-poll", "screen-inbox", "tailor-cv")
+JOB_TYPES = ("source-poll", "screen-inbox", "triage-inbox", "tailor-cv")
+TARGETLESS_JOBS = frozenset({"screen-inbox", "triage-inbox"})
 JOB_STATES = ("queued", "running", "done", "failed")
 
 
@@ -132,8 +134,20 @@ def enqueue(
         from hunt.core.sources import get_source
 
         get_source(ws, target_id)
+    elif job_type in TARGETLESS_JOBS:
+        if target_id:
+            raise ValidationError(f"{job_type} does not take a target")
     elif target_id:
-        raise ValidationError("screen-inbox does not take a target")
+        raise ValidationError(f"{job_type} does not take a target")
+
+    if job_type == "triage-inbox":
+        force = bool((payload or {}).get("force"))
+        job = enqueue_triage_if_needed(
+            ws, force=force, skip_if_idle=False, extra=payload
+        )
+        if job is None:
+            raise HuntError("triage-inbox enqueue returned no job")
+        return job
 
     now = now_iso()
     job_id = new_id()
@@ -153,7 +167,97 @@ def enqueue(
     return get_job(ws, job_id)
 
 
-def active_for(ws: Workspace, job_type: str, target_id: str) -> list[Job]:
+def drop_on_codes(ws: Workspace) -> list[str]:
+    return [str(x) for x in (ws.knockout_rules().get("drop_on") or []) if x]
+
+
+def enqueue_triage_if_needed(
+    ws: Workspace,
+    *,
+    force: bool = False,
+    skip_if_idle: bool = True,
+    extra: dict[str, Any] | None = None,
+) -> Job | None:
+    """At most one queued/running triage-inbox.
+
+    Must be called with no open transaction. If ``ws.conn.in_transaction``,
+    rollback then BEGIN IMMEDIATE — never nest.
+
+    skip_if_idle=True (poll): return None unless enabled AND drop_on
+    nonempty AND (active or untriaged_pending > 0). Operator enqueue
+    (skip_if_idle=False) ignores enabled and drop_on.
+    """
+    from hunt.agent.config import triage_enabled
+    from hunt.core.triage import count_untriaged_pending
+
+    if ws.conn.in_transaction:
+        ws.conn.rollback()
+    try:
+        ws.conn.execute("BEGIN IMMEDIATE")
+        active = active_for(ws, "triage-inbox")
+        if active:
+            job = active[0]
+            if force and job.state == "queued":
+                body = dict(job.payload)
+                body["force"] = True
+                ws.conn.execute(
+                    "UPDATE jobs SET payload_json = ? WHERE id = ?",
+                    (json.dumps(body), job.id),
+                )
+                ws.conn.commit()
+                return get_job(ws, job.id)
+            if force and job.state == "running":
+                ws.conn.commit()
+                raise HuntError(
+                    f"triage-inbox already running: {job.id}; "
+                    "wait or re-enqueue after it finishes"
+                )
+            ws.conn.commit()
+            return job
+        if skip_if_idle and not force:
+            if not triage_enabled(ws) or not drop_on_codes(ws):
+                ws.conn.commit()
+                return None
+            if count_untriaged_pending(ws) == 0:
+                ws.conn.commit()
+                return None
+        body: dict[str, Any] = {}
+        if extra:
+            for key, value in extra.items():
+                if key in {"force", "stamp_human_notes"}:
+                    continue
+                body[key] = value
+        if force:
+            body["force"] = True
+        if not skip_if_idle:
+            body["stamp_human_notes"] = True
+        job_id = new_id()
+        now = now_iso()
+        ws.conn.execute(
+            """INSERT INTO jobs(
+                   id, type, state, target_id, payload_json, error, result_json,
+                   created_at, started_at, finished_at
+               ) VALUES (?, 'triage-inbox', 'queued', NULL, ?, NULL, '{}', ?, NULL, NULL)""",
+            (job_id, json.dumps(body), now),
+        )
+        ws.conn.commit()
+        return get_job(ws, job_id)
+    except HuntError:
+        raise
+    except sqlite3.IntegrityError:
+        ws.conn.rollback()
+        existing = active_for(ws, "triage-inbox")
+        if existing:
+            return existing[0]
+        raise HuntError("triage-inbox unique index conflict but no active job")
+    except Exception:
+        ws.conn.rollback()
+        raise
+
+
+def active_for(
+    ws: Workspace, job_type: str, target_id: str | None = None
+) -> list[Job]:
     return [
         job
         for job in list_jobs(ws, job_type=job_type, target_id=target_id)

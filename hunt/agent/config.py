@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from hunt.core.errors import ValidationError
+from hunt.core.errors import HuntError, ValidationError
 from hunt.core.secrets import secret
 from hunt.core.workspace import Workspace
 
@@ -127,7 +127,15 @@ def is_small_local(model_name: str, base_url: str, discovered: list[str] | None 
     return marked and (local_host or "gemma" in blob or "e4b" in blob)
 
 
-def small_local_warning(model_name: str, base_url: str, discovered: list[str] | None = None) -> str | None:
+def small_local_warning(
+    model_name: str,
+    base_url: str,
+    discovered: list[str] | None = None,
+    *,
+    role: str = "screener",
+) -> str | None:
+    if role == "triage":
+        return None
     if not is_small_local(model_name, base_url, discovered):
         return None
     return (
@@ -139,6 +147,102 @@ def small_local_warning(model_name: str, base_url: str, discovered: list[str] | 
 def is_local_base_url(base_url: str) -> bool:
     host = (urlparse(base_url or "").hostname or "").lower()
     return host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+
+
+def require_local_triage_url(base_url: str) -> str:
+    if not is_local_base_url(base_url):
+        raise HuntError(
+            f"triage-inbox refuses hosted URL {base_url}; "
+            "Layer 2 is local Gemma only (no api.x.ai fallback)"
+        )
+    return base_url
+
+
+def agent_triage_section(ws: Workspace) -> dict[str, Any]:
+    raw = agent_section(ws).get("triage") or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def triage_enabled(ws: Workspace) -> bool:
+    """Missing key → False. Poll enqueue no-ops. Operator enqueue ignores this."""
+    return bool(agent_triage_section(ws).get("enabled", False))
+
+
+def triage_auto_dismiss(ws: Workspace) -> bool:
+    """Missing key → True (decided). YAML false stays false."""
+    return bool(agent_triage_section(ws).get("auto_dismiss", True))
+
+
+def triage_max_cards(ws: Workspace) -> int:
+    """Live-testing default 64. Pytest/example-workspace ships 8."""
+    raw = agent_triage_section(ws).get("max_cards", 64)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("triage.max_cards must be >= 1") from exc
+    if n < 1:
+        raise ValidationError("triage.max_cards must be >= 1")
+    return n
+
+
+def triage_keep_hint(ws: Workspace) -> str:
+    return str(agent_triage_section(ws).get("keep_hint") or "").strip()
+
+
+def _is_rate_spec(block: Any) -> bool:
+    return isinstance(block, dict) and (
+        "income_rate" in block or "social_rate" in block or "social_fixed_month" in block
+    )
+
+
+def triage_geo_hint(ws: Workspace) -> str:
+    explicit = str(agent_triage_section(ws).get("geo_hint") or "").strip()
+    if explicit:
+        return explicit
+    keys = sorted(
+        str(k)
+        for k, block in (ws.tax_homes or {}).items()
+        if isinstance(block, dict) and not _is_rate_spec(block)
+    )
+    if not keys:
+        return ""
+    return "location outside " + ", ".join(keys) + " or not remote as written on the card"
+
+
+def agent_triage_model(ws: Workspace) -> dict[str, str]:
+    """Resolve Layer 2 model. Hosted URLs fail; missing explicit block fails when Layer 3 is hosted."""
+    section = agent_triage_section(ws)
+    raw = section.get("model") if isinstance(section.get("model"), dict) else {}
+    has_explicit = bool(raw.get("base_url") or raw.get("model"))
+    if has_explicit:
+        if not str(raw.get("base_url") or "").strip():
+            raise HuntError(
+                "agent.triage.model is missing base_url; Layer 2 has no local URL"
+            )
+        base_url = validate_base_url(raw.get("base_url"))
+        name = str(raw.get("model") or "").strip()
+        if not name:
+            raise HuntError(
+                "agent.triage.model is missing model; Layer 2 has no local URL"
+            )
+        api_key_env = (
+            validate_env_name(raw.get("api_key_env"))
+            if "api_key_env" in raw
+            else ""
+        )
+        require_local_triage_url(base_url)
+        return {
+            "base_url": base_url,
+            "api_key_env": api_key_env,
+            "model": validate_model_id(name),
+        }
+    inherited = agent_model(ws)
+    if is_local_base_url(inherited["base_url"]):
+        require_local_triage_url(inherited["base_url"])
+        return inherited
+    raise HuntError(
+        "agent.triage.model is missing; Layer 3 is hosted and Layer 2 has no local URL"
+    )
 
 
 def validate_base_url(base_url: str | None) -> str:

@@ -19,7 +19,7 @@
     "interview",
     "offer",
   ];
-  const JOB_TYPES = ["source-poll", "screen-inbox", "tailor-cv"];
+  const JOB_TYPES = ["source-poll", "screen-inbox", "triage-inbox", "tailor-cv"];
   const JOB_STATES = ["queued", "running", "done", "failed"];
   const TOKEN_KEY = "hunt_token";
   const THEME_KEY = "hunt.theme";
@@ -98,6 +98,9 @@
     boardFilters: new Set(OPEN_STATUSES),
     boardQuery: "",
     inboxStatus: "pending",
+    inboxKnockout: "",
+    inboxTriage: "",
+    inboxSource: "",
     jobStateFilters: new Set(JOB_STATES),
     jobTypeFilters: new Set(JOB_TYPES),
     quotedDirty: false,
@@ -1052,12 +1055,48 @@
   }
 
   function inboxRowActions(it, pending) {
-    if (!pending) return "";
+    if (!pending) {
+      return `<div class="inbox-actions">
+            ${Btn("Restore", { attrs: `data-restore="${esc(it.id)}"` })}
+            ${CommandHint(`hunt inbox restore ${it.id} --json`)}
+            </div>`;
+    }
     return `<div class="inbox-actions">
             ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
             ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
             ${CommandHint(`hunt inbox promote ${it.id} --json`)}
             </div>`;
+  }
+
+  function inboxFiltersHtml(items) {
+    const floorOn = state.inboxKnockout === "pay_below_floor|below_floor";
+    const keepOn = state.inboxTriage === "keep";
+    const unsureOn = state.inboxTriage === "unsure";
+    const sources = [];
+    const seen = new Set();
+    if (state.inboxSource) {
+      sources.push(state.inboxSource);
+      seen.add(state.inboxSource);
+    }
+    for (const it of items || []) {
+      const sid = it.source_id;
+      if (sid && !seen.has(sid)) {
+        seen.add(sid);
+        sources.push(sid);
+      }
+    }
+    const sourceChips = sources
+      .map((sid) => {
+        const on = state.inboxSource === sid;
+        return `<button type="button" data-primitive="FilterChip" data-inbox-source="${esc(sid)}" aria-pressed="${on}">${esc(sid)}</button>`;
+      })
+      .join("");
+    return `<div data-primitive="FilterBar" class="inbox-filters">
+      <button type="button" data-primitive="FilterChip" data-inbox-knockout="pay_below_floor|below_floor" aria-pressed="${floorOn}">Floor</button>
+      <button type="button" data-primitive="FilterChip" data-inbox-triage="keep" aria-pressed="${keepOn}">Keep</button>
+      <button type="button" data-primitive="FilterChip" data-inbox-triage="unsure" aria-pressed="${unsureOn}">Unsure</button>
+      ${sourceChips}
+    </div>`;
   }
 
   async function renderInbox(root, badges) {
@@ -1071,7 +1110,11 @@
     );
     let data;
     try {
-      data = await api(`/api/inbox?status=${encodeURIComponent(status)}`);
+      const params = new URLSearchParams({ status });
+      if (state.inboxSource) params.set("source", state.inboxSource);
+      if (state.inboxKnockout) params.set("knockout", state.inboxKnockout);
+      if (state.inboxTriage) params.set("triage", state.inboxTriage);
+      data = await api(`/api/inbox?${params.toString()}`);
     } catch (err) {
       root.innerHTML = shell("inbox", badges, ErrorBanner(err.message));
       return;
@@ -1079,7 +1122,7 @@
     const items = data.inbox || [];
     const hint = pending ? "hunt inbox list --json" : "hunt inbox list --status dismissed --json";
     const actions = CommandHint(hint);
-    const header = pageHeader("Inbox", `<span class="page-count">${items.length}</span>`, actions) + tabs;
+    const header = pageHeader("Inbox", `<span class="page-count">${items.length}</span>`, actions) + tabs + inboxFiltersHtml(items);
     if (!items.length) {
       root.innerHTML = shell(
         "inbox",
@@ -1137,6 +1180,7 @@
           <div class="row-actions">
             ${pending ? Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` }) : ""}
             ${pending ? Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` }) : ""}
+            ${pending ? "" : Btn("Restore", { attrs: `data-restore="${esc(it.id)}"` })}
           </div>
         </article>`;
       })
@@ -2613,6 +2657,27 @@
       render();
       return;
     }
+    const inboxKnockout = ev.target.closest("[data-inbox-knockout]");
+    if (inboxKnockout) {
+      const value = inboxKnockout.getAttribute("data-inbox-knockout") || "";
+      state.inboxKnockout = state.inboxKnockout === value ? "" : value;
+      render();
+      return;
+    }
+    const inboxTriage = ev.target.closest("[data-inbox-triage]");
+    if (inboxTriage) {
+      const value = inboxTriage.getAttribute("data-inbox-triage") || "";
+      state.inboxTriage = state.inboxTriage === value ? "" : value;
+      render();
+      return;
+    }
+    const inboxSource = ev.target.closest("[data-inbox-source]");
+    if (inboxSource) {
+      const value = inboxSource.getAttribute("data-inbox-source") || "";
+      state.inboxSource = state.inboxSource === value ? "" : value;
+      render();
+      return;
+    }
     if (ev.target.closest("[data-close-dialog]") && ev.target.hasAttribute("data-close-dialog")) {
       state.dialog = null;
       render();
@@ -2662,6 +2727,19 @@
       render();
       return;
     }
+    const restoreBtn = ev.target.closest("[data-restore]");
+    if (restoreBtn) {
+      const id = restoreBtn.getAttribute("data-restore");
+      state.dialog = {
+        kind: "confirm",
+        title: "Restore listing",
+        body: "Restore this listing to pending?",
+        ok: "Restore",
+        action: `restore:${id}`,
+      };
+      render();
+      return;
+    }
     const ok = ev.target.closest("[data-confirm-ok]");
     if (ok) {
       const action = ok.getAttribute("data-confirm-ok");
@@ -2671,6 +2749,15 @@
         try {
           await api(`/api/inbox/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
           showToast("Dismissed");
+        } catch (err) {
+          alert(err.message);
+        }
+        render();
+      } else if (action.startsWith("restore:")) {
+        const id = action.slice(8);
+        try {
+          await api(`/api/inbox/${encodeURIComponent(id)}/restore`, { method: "POST" });
+          showToast("Restored");
         } catch (err) {
           alert(err.message);
         }

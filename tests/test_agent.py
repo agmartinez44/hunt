@@ -104,6 +104,11 @@ def test_example_workspace_ships_xai_default():
     assert agent["model"]["base_url"] == "https://api.x.ai/v1"
     assert agent["model"]["api_key_env"] == "XAI_API_KEY"
     assert agent["model"]["model"] == "grok-4.5"
+    triage = agent["triage"]
+    assert triage["enabled"] is False
+    assert triage["max_cards"] == 8
+    assert triage["keep_hint"] == ""
+    assert "127.0.0.1:8080" in triage["model"]["base_url"]
     raw = (EXAMPLE / "config.yaml").read_text(encoding="utf-8")
     assert "XAI_API_KEY=" not in raw
     assert "xai-" not in raw
@@ -288,6 +293,138 @@ def test_doctor_warns_on_small_local_gemma(workspace, tmp_path: Path):
         assert any("Gemma E4B" in w for w in report["warnings"])
     finally:
         server.shutdown()
+
+
+def test_doctor_does_not_warn_when_only_triage_is_gemma(workspace, tmp_path: Path):
+    data, env = workspace
+    root = tmp_path / "project"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    layer3, layer3_url = _serve_models(["grok-4.5"])
+    layer2, layer2_url = _serve_models(["gemma-4-E4B"])
+    try:
+        path = data / "config.yaml"
+        cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+        cfg["agent"] = {
+            "harness": "auto",
+            "model": {
+                "base_url": layer3_url,
+                "api_key_env": "",
+                "model": "grok-4.5",
+            },
+            "triage": {
+                "enabled": False,
+                "auto_dismiss": True,
+                "model": {
+                    "base_url": layer2_url,
+                    "api_key_env": "",
+                    "model": "gemma-4-E4B",
+                },
+            },
+        }
+        path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+        _json(
+            [
+                "agent",
+                "install",
+                "--harness",
+                "opencode",
+                "--root",
+                str(root),
+                "--home",
+                str(home),
+            ],
+            env,
+        )
+        _, report = _json(
+            ["agent", "doctor", "--root", str(root), "--home", str(home)],
+            env,
+        )
+        assert report["ok"] is True
+        assert report["warnings"] == []
+        by_id = {row["id"]: row for row in report["checks"]}
+        assert by_id["triage_model"]["ok"] is True
+    finally:
+        layer3.shutdown()
+        layer2.shutdown()
+
+
+def test_doctor_fails_when_auto_dismiss_and_triage_url_missing(workspace, tmp_path: Path):
+    data, env = workspace
+    root = tmp_path / "project"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    _set_model(data, "https://api.x.ai/v1", model="grok-4.5", api_key_env="")
+    path = data / "config.yaml"
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg["agent"]["triage"] = {"auto_dismiss": True}
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    _json(
+        [
+            "agent",
+            "install",
+            "--harness",
+            "opencode",
+            "--root",
+            str(root),
+            "--home",
+            str(home),
+        ],
+        env,
+    )
+    run, report = _json(
+        ["agent", "doctor", "--root", str(root), "--home", str(home)],
+        env,
+        check=False,
+    )
+    by_id = {row["id"]: row for row in report["checks"]}
+    assert by_id["triage_model"]["ok"] is False
+    assert report["ok"] is False
+
+
+def test_doctor_fails_when_triage_url_hosted(workspace, tmp_path: Path):
+    data, env = workspace
+    root = tmp_path / "project"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    path = data / "config.yaml"
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg["agent"]["triage"] = {
+        "auto_dismiss": True,
+        "model": {
+            "base_url": "https://api.x.ai/v1",
+            "api_key_env": "XAI_API_KEY",
+            "model": "grok-4.5",
+        },
+    }
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    _json(
+        [
+            "agent",
+            "install",
+            "--harness",
+            "opencode",
+            "--root",
+            str(root),
+            "--home",
+            str(home),
+        ],
+        env,
+    )
+    _, report = _json(
+        ["agent", "doctor", "--root", str(root), "--home", str(home)],
+        env,
+        check=False,
+    )
+    by_id = {row["id"]: row for row in report["checks"]}
+    assert by_id["triage_model"]["ok"] is False
+    assert "hosted" in by_id["triage_model"]["detail"].lower() or "api.x.ai" in by_id[
+        "triage_model"
+    ]["detail"]
+    assert report["ok"] is False
 
 
 def test_run_dry_run_detects_opencode(workspace, tmp_path: Path):

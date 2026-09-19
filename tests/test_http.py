@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from hunt.core.inbox import add_item, dismiss
+from hunt.core.sources import list_sources
 from hunt.core.workspace import Workspace
 from hunt.http.app import create_app
 
@@ -627,6 +628,13 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert 'status === "dismissed"' in js
     assert '["/profile", "Profile", "profile"]' not in js
     assert "[data-primitive=\"InboxTabs\"]" in css
+    assert "data-restore" in js
+    assert "pay_below_floor|below_floor" in js
+    assert "function inboxRowActions" in js
+    assert 'if (!pending) return ""' not in js
+    assert "data-inbox-knockout" in js
+    assert "data-inbox-triage" in js
+    assert "data-inbox-source" in js
     assert "[data-primitive=\"PostingLink\"]" in css
 
     parsed = _eval_parse_route(js, "/profile")
@@ -639,6 +647,32 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert parsed["status"] == "pending"
     parsed = _eval_parse_route(js, "/nope")
     assert parsed["name"] == "notfound"
+
+
+def test_inbox_list_query_filters(client):
+    http, data, _env = client
+    with Workspace.open(data) as ws:
+        list_sources(ws)
+        add_item(
+            ws,
+            company="Floor Co",
+            title="Role A",
+            source_id="justjoin-sample",
+            knockouts=["pay_below_floor"],
+            external_id="floor-1",
+        )
+        add_item(
+            ws,
+            company="Other Co",
+            title="Role B",
+            source_id="remotive-eu",
+            knockouts=["title"],
+            external_id="other-1",
+        )
+    floor = http.get("/api/inbox?knockout=pay_below_floor%7Cbelow_floor").json()["inbox"]
+    assert [row["company"] for row in floor] == ["Floor Co"]
+    src = http.get("/api/inbox?source=justjoin-sample").json()["inbox"]
+    assert [row["company"] for row in src] == ["Floor Co"]
 
 
 def test_restore_sets_keep_restored(client):

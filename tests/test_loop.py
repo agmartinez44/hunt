@@ -115,7 +115,8 @@ def test_source_poll_screen_promote_only_path(workspace):
     assert poll["result"]["listings"] == 2
     assert poll["result"]["new"] == 2
     assert poll["result"]["knockouts"]["inbox_added"] == 2
-    assert poll["result"]["screener"]["triggered"] is True
+    assert poll["result"]["screener"]["triggered"] is False
+    assert poll["result"]["screener"]["reason"] == "triage_disabled"
     assert poll["result"]["screener"]["never_apply"] is True
     assert poll["result"]["screener"]["never_send_mail"] is True
 
@@ -156,7 +157,7 @@ def test_source_poll_screen_promote_only_path(workspace):
     _, poll2 = _json(["sources", "run", "justjoin-sample", "--run"], env)
     assert poll2["result"]["new"] == 0
     assert poll2["result"]["screener"]["triggered"] is False
-    assert poll2["result"]["screener"]["reason"] == "no_new_listings"
+    assert poll2["result"]["screener"]["reason"] == "triage_disabled"
     _, inbox_all = _json(["inbox", "list", "--status", "all"], env)
     assert len(inbox_all["inbox"]) == 2
 

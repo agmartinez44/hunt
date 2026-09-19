@@ -103,16 +103,25 @@ def _wake_disabled() -> bool:
 def maybe_wake_screener(
     ws: Workspace,
     *,
-    new: int,
+    survivors: int,
     spawn: SpawnFn | None = None,
     path_env: str | None = None,
 ) -> dict[str, Any]:
-    """Start the screener harness when ingest created listings.
+    """Start the screener harness when this triage job kept+unsure survivors.
 
-    ``new == 0`` skips the LLM. Missing harness does not fail ingest.
+    ``survivors == 0`` skips the LLM. Missing harness does not fail the job.
+    Only ``run_triage_inbox`` should call this.
     """
-    if new <= 0:
-        return _idle(reason="no_new_listings")
+    from hunt.agent.config import agent_triage_section
+
+    if survivors <= 0:
+        return _idle(reason="no_survivors", survivors=survivors)
+    try:
+        min_n = int(agent_triage_section(ws).get("wake_min_survivors") or 1)
+    except (TypeError, ValueError):
+        min_n = 1
+    if survivors < min_n:
+        return _idle(reason="below_wake_min", survivors=survivors)
     plan = prepare_run(
         ws,
         "screener",
@@ -123,6 +132,7 @@ def maybe_wake_screener(
         return _armed(
             reason="no_harness",
             started=False,
+            survivors=survivors,
             install=plan.get("install") or OPENCODE_INSTALL_COMMAND,
         )
     existing = running_pid(ws)
@@ -130,6 +140,7 @@ def maybe_wake_screener(
         return _armed(
             reason="already_running",
             started=False,
+            survivors=survivors,
             pid=existing,
             harness=plan.get("harness"),
         )
@@ -137,6 +148,7 @@ def maybe_wake_screener(
         return _armed(
             reason="wake_disabled",
             started=False,
+            survivors=survivors,
             harness=plan.get("harness"),
         )
     env = runner_env(ws)
@@ -148,8 +160,9 @@ def maybe_wake_screener(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(pid), encoding="utf-8")
     return _armed(
-        reason="new_listings",
+        reason="survivors",
         started=True,
+        survivors=survivors,
         harness=plan.get("harness"),
         pid=pid,
     )
