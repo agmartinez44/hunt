@@ -114,14 +114,19 @@ def test_source_poll_screen_promote_only_path(workspace):
     assert poll["job"]["state"] == "done"
     assert poll["result"]["listings"] == 2
     assert poll["result"]["new"] == 2
+    assert poll["result"]["knockouts"]["inbox_added"] == 2
+    assert poll["result"]["screener"]["triggered"] is True
+    assert poll["result"]["screener"]["never_apply"] is True
+    assert poll["result"]["screener"]["never_send_mail"] is True
 
     _, apps_before = _json(["applications", "list"], env)
     assert apps_before["applications"] == []
     _, inbox_before = _json(["inbox", "list"], env)
-    assert inbox_before["inbox"] == []
+    assert len(inbox_before["inbox"]) == 2
 
     _, screened = _json(["jobs", "enqueue", "--type", "screen-inbox", "--run"], env)
-    assert screened["result"]["inbox_added"] == 2
+    assert screened["result"]["inbox_added"] == 0
+    assert screened["result"]["refreshed"] == 2
 
     _, inbox = _json(["inbox", "list"], env)
     by_company = {row["company"]: row for row in inbox["inbox"]}
@@ -147,9 +152,11 @@ def test_source_poll_screen_promote_only_path(workspace):
     again = _run(["--json", "inbox", "promote", acme["id"]], env, check=False)
     assert again.returncode != 0
 
-    # Dedup: second poll creates no extra listings / inbox rows.
+    # Dedup: second poll creates no extra listings / inbox rows and skips LLM.
     _, poll2 = _json(["sources", "run", "justjoin-sample", "--run"], env)
     assert poll2["result"]["new"] == 0
+    assert poll2["result"]["screener"]["triggered"] is False
+    assert poll2["result"]["screener"]["reason"] == "no_new_listings"
     _, inbox_all = _json(["inbox", "list", "--status", "all"], env)
     assert len(inbox_all["inbox"]) == 2
 

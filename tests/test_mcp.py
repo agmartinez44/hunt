@@ -74,13 +74,16 @@ def test_mcp_promote_is_only_listing_path(data_dir: Path):
         "sources_run", {"id": "justjoin-sample", "run": True}, data_dir
     )
     assert poll["job"]["state"] == "done"
+    assert poll["result"]["knockouts"]["inbox_added"] == 2
+    assert poll["result"]["screener"]["triggered"] is True
     _, apps = _call("applications_list", {}, data_dir)
     assert apps["applications"] == []
 
     _, screened = _call(
         "jobs_enqueue", {"type": "screen-inbox", "run": True}, data_dir
     )
-    assert screened["result"]["inbox_added"] == 2
+    assert screened["result"]["inbox_added"] == 0
+    assert screened["result"]["refreshed"] == 2
     _, inbox = _call("inbox_list", {}, data_dir)
     acme = next(row for row in inbox["inbox"] if row["company"] == "Acme Radar")
 

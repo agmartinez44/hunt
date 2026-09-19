@@ -126,6 +126,8 @@ the same install / key / local-URL path at **Agent** → `/settings`.
 **OpenCode → Claude Code / Codex**. If none are on `PATH`, it prints **one**
 OpenCode install command (`curl -fsSL https://opencode.ai/install | bash`)
 and exits. Paperclip is optional company OS, not a Hunt dependency.
+After `source-poll`, knockouts run in-process; `new > 0` starts the
+screener harness immediately, and `new == 0` skips the LLM.
 
 Packs:
 

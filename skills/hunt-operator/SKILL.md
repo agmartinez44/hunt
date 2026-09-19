@@ -22,7 +22,8 @@ Screener pack: `skills/hunt-screener` — propose only; never promote unless ask
 ## Product loop
 
 ```
-source-poll → listings → screen-inbox → inbox
+source-poll → listings → knockouts (always) → inbox
+    → LLM screener if new > 0 (installed harness, not a cron)
     → promote | dismiss   (explicit; never inferred)
     → application + attachments
     → tailor-cv / cv render

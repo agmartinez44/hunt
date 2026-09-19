@@ -3,6 +3,14 @@
 Hunt stores jobs in SQLite (`source-poll`, `screen-inbox`, `tailor-cv`).
 HTTP, CLI, and MCP only enqueue. Something has to **claim** `queued` rows.
 
+After `source-poll` finishes, Hunt runs in-process `screen-inbox`
+knockouts (no LLM). If that poll created listings (`new > 0`), it starts
+the installed screener harness — the same command as
+`hunt agent run screener` — without waiting for a clock. `new == 0`
+skips the LLM. IMAP can stay on a cheap poll; HTTP sources can too; the
+LLM is event-driven off ingest. Paperclip is optional and is not this
+path. Hunt never applies or sends mail.
+
 `config.yaml`:
 
 ```yaml

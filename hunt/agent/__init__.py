@@ -15,6 +15,7 @@ from hunt.agent.doctor import doctor
 from hunt.agent.install import install, preview
 from hunt.agent.run import prepare_run
 from hunt.agent.status import agent_status, save_agent
+from hunt.agent.wake import maybe_wake_screener
 
 __all__ = [
     "DEFAULT_API_KEY_ENV",
@@ -28,6 +29,7 @@ __all__ = [
     "agent_status",
     "doctor",
     "install",
+    "maybe_wake_screener",
     "models_url",
     "prepare_run",
     "preview",

@@ -18,7 +18,10 @@ you already have (OpenCode, then Claude Code / Codex).
 ## Loop
 
 1. Ingest: `hunt --json sources run <id> --run` (enqueues `source-poll`).
-2. Knockouts: `hunt --json jobs enqueue --type screen-inbox --run`.
+   Hunt then runs knockouts in-process. If `new > 0`, it starts this
+   pack via the installed harness (`hunt agent run screener`). If
+   `new == 0`, it does not start an LLM pass. Not a Paperclip cron.
+2. Knockouts (refresh): `hunt --json jobs enqueue --type screen-inbox --run`.
 3. Read: `hunt --json inbox list` (pending).
 4. **Propose** keep / dismiss / ask — do not promote or dismiss yet.
 5. Mutate only if the user asked: `inbox promote` or `inbox dismiss`.
