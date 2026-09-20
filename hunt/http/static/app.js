@@ -1110,14 +1110,21 @@
     </div>`;
   }
 
-  function inboxHeaderExtra(visible, items) {
+  function inboxHeaderExtra(visible, items, filters) {
     const active = Boolean(
       state.inboxQuery || state.inboxSource || state.inboxKnockout || state.inboxTriage
     );
     const n = visible.length;
     const total = items.length;
     const text = active && total ? `${n} / ${total}` : String(n);
-    return `<span class="page-count">${esc(text)}</span>`;
+    const count = `<span class="page-count">${esc(text)}</span>`;
+    if (!filters) return count;
+    const cap = (filters.inbox || {}).pending_cap;
+    const pending = (filters.inbox || {}).pending_count;
+    const capText = cap === 0 ? `${pending}/unlimited` : `${pending}/${cap}`;
+    const drop = ((filters.knockouts || {}).drop_on || []).filter(Boolean);
+    const dropText = drop.length ? ` · drop_on: ${drop.join(", ")}` : "";
+    return `${count}<span class="inbox-filter-summary"><a href="/sources">cap ${esc(capText)}${esc(dropText)}</a></span>`;
   }
 
   function inboxThead() {
@@ -1159,6 +1166,7 @@
       pageHeader("Inbox", "", "") + tabs + LoadingSkeleton(8, INBOX_COLS)
     );
     let data;
+    let filters = null;
     try {
       const params = new URLSearchParams({
         status,
@@ -1168,7 +1176,12 @@
       if (state.inboxSource) params.set("source", state.inboxSource);
       if (state.inboxKnockout) params.set("knockout", state.inboxKnockout);
       if (state.inboxTriage) params.set("triage", state.inboxTriage);
-      data = await api(`/api/inbox?${params.toString()}`);
+      const fetched = await Promise.all([
+        api(`/api/inbox?${params.toString()}`),
+        api("/api/workspace/filters").catch(() => null),
+      ]);
+      data = fetched[0];
+      filters = fetched[1];
     } catch (err) {
       root.innerHTML = shell("inbox", badges, ErrorBanner(err.message));
       return;
@@ -1177,7 +1190,7 @@
     const visible = inboxVisible(items);
     const hint = pending ? "hunt inbox list --json" : "hunt inbox list --status dismissed --json";
     const actions = CommandHint(hint);
-    const header = pageHeader("Inbox", inboxHeaderExtra(visible, items), actions) + tabs + inboxFiltersHtml(items);
+    const header = pageHeader("Inbox", inboxHeaderExtra(visible, items, filters), actions) + tabs + inboxFiltersHtml(items);
     if (!visible.length) {
       const filtered = inboxFiltersActive();
       const empty = filtered
@@ -1256,21 +1269,122 @@
     );
   }
 
+  function isSecretConfigKey(key) {
+    const k = String(key || "");
+    if (k.endsWith("_env")) return false;
+    return /password$|token|secret|^api_key$/i.test(k);
+  }
+
+  function prettyListOrScalar(value) {
+    if (Array.isArray(value)) return value.map((x) => String(x)).join(", ");
+    if (value && typeof value === "object" && typeof value.join === "function") {
+      return Array.from(value).map((x) => String(x)).join(", ");
+    }
+    return String(value ?? "");
+  }
+
+  function sourceConfigLines(source) {
+    const cfg = (source && source.config) || {};
+    const kind = source && source.kind;
+    const allow =
+      kind === "imap_alerts"
+        ? ["folder", "host_env", "user_env", "password_env", "from_contains", "subject_contains", "limit"]
+        : ["profile", "query", "path", "url", "max_items", "paginate"];
+    const lines = [];
+    for (const key of allow) {
+      if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
+      if (isSecretConfigKey(key)) continue;
+      const val = cfg[key];
+      if (key === "query" && val && typeof val === "object" && !Array.isArray(val)) {
+        for (const [qk, qv] of Object.entries(val)) {
+          if (isSecretConfigKey(qk)) continue;
+          lines.push(`query.${qk}=${prettyListOrScalar(qv)}`);
+        }
+        continue;
+      }
+      if (key === "paginate" && val && typeof val === "object" && !Array.isArray(val)) {
+        for (const pk of ["max_pages", "max_items", "param"]) {
+          if (val[pk] == null || val[pk] === "") continue;
+          lines.push(`paginate.${pk}=${val[pk]}`);
+        }
+        continue;
+      }
+      lines.push(`${key}=${prettyListOrScalar(val)}`);
+    }
+    return lines;
+  }
+
+  function sourceConfigHtml(source) {
+    const lines = sourceConfigLines(source);
+    if (!lines.length) return "";
+    const body = lines.map((l) => `<div class="source-config-line">${esc(l)}</div>`).join("");
+    return `<details class="source-config"><summary>config</summary>${body}</details>`;
+  }
+
+  function filtersStripHtml(filters) {
+    if (!filters) return "";
+    const kn = filters.knockouts || {};
+    const listKeys = [
+      "title_include",
+      "title_exclude",
+      "experience_block",
+      "modality_block",
+      "engagement_allow",
+      "languages_block",
+    ];
+    const parts = [];
+    let any = false;
+    for (const k of listKeys) {
+      const vals = kn[k] || [];
+      if (vals.length) {
+        any = true;
+        parts.push(`<div><span class="muted">${esc(k)}</span> ${esc(vals.join(", "))}</div>`);
+      }
+    }
+    if (!any) parts.push(`<div>no knockouts in config.yaml</div>`);
+    const drop = kn.drop_on || [];
+    parts.push(`<div><span class="muted">drop_on</span> ${esc(drop.length ? drop.join(", ") : "—")}</div>`);
+    const floor = filters.floor;
+    const floorText =
+      floor && floor.amount != null
+        ? `${floor.amount} ${floor.currency || ""} / ${floor.unit || ""}`.trim()
+        : "no comp_floor";
+    parts.push(`<div><span class="muted">floor</span> ${esc(floorText)}</div>`);
+    const inbox = filters.inbox || {};
+    const capText =
+      inbox.pending_cap === 0
+        ? `unlimited (${inbox.pending_count} pending)`
+        : `${inbox.pending_count} / ${inbox.pending_cap}`;
+    parts.push(`<div><span class="muted">pending cap</span> ${esc(capText)}</div>`);
+    if (filters.poll && filters.poll.help) {
+      parts.push(`<div class="muted">${esc(filters.poll.help)}</div>`);
+    }
+    return `<div data-primitive="FiltersStrip">${parts.join("")}${CommandHint("edit $HUNT_DATA/config.yaml")}</div>`;
+  }
+
   async function renderSources(root, badges) {
     root.innerHTML = shell("sources", badges, pageHeader("Sources", "", "") + LoadingSkeleton(4, SOURCE_COLS));
     let data;
+    let filters = null;
     try {
-      data = await api("/api/sources");
+      const fetched = await Promise.all([
+        api("/api/sources"),
+        api("/api/workspace/filters").catch(() => null),
+      ]);
+      data = fetched[0];
+      filters = fetched[1];
     } catch (err) {
       root.innerHTML = shell("sources", badges, ErrorBanner(err.message));
       return;
     }
     const sources = data.sources || [];
+    const strip = filtersStripHtml(filters);
     if (!sources.length) {
       root.innerHTML = shell(
         "sources",
         badges,
         pageHeader("Sources", "", CommandHint("hunt sources list --json")) +
+          strip +
           EmptyState(
             "No sources configured",
             "Add them in config.yaml (v1 has no source editor).",
@@ -1282,7 +1396,7 @@
     const rows = sources
       .map(
         (s) => `<tr data-primitive="SourceRow">
-          <td>${esc(s.name)}</td>
+          <td>${esc(s.name)}${sourceConfigHtml(s)}</td>
           <td>${esc(s.kind)}</td>
           <td>${s.enabled ? "yes" : "no"}</td>
           <td title="${esc(s.last_run_at || "")}">${esc(s.last_run_at ? relative(s.last_run_at) : "—")}</td>
@@ -1301,6 +1415,7 @@
           <div>${esc(s.kind)}</div>
           <div class="faint" title="${esc(s.last_run_at || "")}">${esc(s.last_run_at ? relative(s.last_run_at) : "never run")}</div>
           ${s.last_error ? `<div class="danger-text">${esc(s.last_error)}</div>` : ""}
+          ${sourceConfigHtml(s)}
           <div class="row-actions">
             ${Btn("Run now", { attrs: `data-run-source="${esc(s.id)}" ${s.enabled ? "" : "disabled"}` })}
           </div>
@@ -1311,6 +1426,7 @@
       "sources",
       badges,
       pageHeader("Sources", `<span class="page-count">${sources.length}</span>`, CommandHint("hunt sources list --json")) +
+        strip +
         `<table data-primitive="DataTable" class="sources-table">
           <thead><tr><th>Name</th><th>Adapter</th><th>Enabled</th><th>Last run</th><th>Last error</th><th>Listings</th><th>Inbox</th><th></th><th>Id</th></tr></thead>
           <tbody>${rows}</tbody>

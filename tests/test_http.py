@@ -240,6 +240,62 @@ def test_optional_auth_token(workspace):
     ok = http.get("/api/applications", headers={"Authorization": "Bearer secret-token"})
     assert ok.status_code == 200
     assert ok.json()["applications"] == []
+    filters_denied = http.get("/api/workspace/filters")
+    assert filters_denied.status_code == 401
+    filters_ok = http.get(
+        "/api/workspace/filters", headers={"Authorization": "Bearer secret-token"}
+    )
+    assert filters_ok.status_code == 200
+    dumped = json.dumps(filters_ok.json())
+    assert "secret-token" not in dumped
+    assert "auth_token" not in dumped
+
+
+def test_workspace_filters_from_example_workspace(client):
+    http, _data, _env = client
+    res = http.get("/api/workspace/filters")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    dumped = json.dumps(body)
+    assert body["knockouts"]["title_include"] == []
+    assert body["knockouts"]["title_exclude"] == []
+    assert body["knockouts"]["drop_on"] == []
+    assert body["inbox"]["pending_cap"] == 200
+    assert body["inbox"]["pending_cap_default"] == 200
+    assert body["inbox"]["pending_count"] == 0
+    assert body["inbox"]["pending_cap_in_yaml"] is True
+    assert body["floor"]["amount"] == 7000
+    assert body["floor"]["currency"] == "EUR"
+    assert body["floor"]["unit"] == "month"
+    assert body["poll"]["kind"] == "operator_crontab"
+    assert "crontab" in body["poll"]["help"].lower()
+    assert "hunt sources run" in body["poll"]["help"]
+    assert "08:00" not in dumped
+    assert "Warsaw" not in dumped
+    assert "Europe/Warsaw" not in dumped
+    assert "auth_token" not in dumped
+    assert body["edit"]["path"] == "$HUNT_DATA/config.yaml"
+
+    sources = http.get("/api/sources").json()["sources"]
+    mail = next(s for s in sources if s["id"] == "mail-alerts")
+    assert mail["config"]["password_env"] == "IMAP_PASSWORD"
+    blob = json.dumps(mail)
+    assert "IMAP_PASSWORD" in blob
+    assert "imap-secret" not in blob.lower()
+    js = (ROOT / "hunt" / "http" / "static" / "app.js").read_text()
+    assert "password_env" in js
+    assert '"profile"' in js or "profile" in js
+    assert '.join(", ")' in js.split("function prettyListOrScalar")[1][:400]
+    assert "v1 has no source editor" in js
+    assert "function sourceConfigHtml" in js
+    assert 'data-primitive="FiltersStrip"' in js
+    assert 'href="/sources"' in js.split("function inboxHeaderExtra")[1].split("function inboxThead")[0]
+    extra = js.split("function inboxHeaderExtra")[1].split("function inboxThead")[0]
+    assert "edit $HUNT_DATA/config.yaml" not in extra
+    assert "08:00" not in js
+    assert "Warsaw" not in js
+    css = (ROOT / "hunt" / "http" / "static" / "hunt.css").read_text()
+    assert "[data-primitive=\"FiltersStrip\"]" in css
 
 
 def test_ui_has_no_apply_controls():

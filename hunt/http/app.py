@@ -368,6 +368,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             item = serialize_inbox_item(ws, restore(ws, item_id))
         return {"inbox_item": item}
 
+    @app.get("/api/workspace/filters")
+    def api_workspace_filters(_: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            return ws.filter_view()
+
     @app.get("/api/sources")
     def api_list_sources(_: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:

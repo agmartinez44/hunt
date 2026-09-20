@@ -184,3 +184,43 @@ class Workspace:
             return None
         name = loaded.get("name")
         return str(name) if name else None
+
+    def filter_view(self) -> dict[str, Any]:
+        from hunt.core.inbox import pending_cap, DEFAULT_PENDING_CAP, count_pending
+
+        rules = self.knockout_rules()
+        inbox_cfg = self.config.get("inbox") if isinstance(self.config.get("inbox"), dict) else {}
+        floor = self.comp_floor
+        floor_view = None
+        if isinstance(floor, dict) and floor.get("amount") is not None:
+            floor_view = {
+                "amount": floor.get("amount"),
+                "currency": floor.get("currency"),
+                "unit": floor.get("unit"),
+            }
+        return {
+            "knockouts": {
+                "title_include": list(rules.get("title_include") or []),
+                "title_exclude": list(rules.get("title_exclude") or []),
+                "experience_block": list(rules.get("experience_block") or []),
+                "modality_block": list(rules.get("modality_block") or []),
+                "engagement_allow": list(rules.get("engagement_allow") or []),
+                "languages_block": list(rules.get("languages_block") or []),
+                "drop_on": list(rules.get("drop_on") or []),
+            },
+            "floor": floor_view,
+            "inbox": {
+                "pending_cap": pending_cap(self),
+                "pending_cap_default": DEFAULT_PENDING_CAP,
+                "pending_count": count_pending(self),
+                "pending_cap_in_yaml": "pending_cap" in inbox_cfg,
+            },
+            "poll": {
+                "kind": "operator_crontab",
+                "help": "Cadence is operator crontab plus ad-hoc hunt sources run; not a Hunt field.",
+            },
+            "edit": {
+                "path": "$HUNT_DATA/config.yaml",
+                "hint": "v1 has no source or knockouts editor; edit the YAML.",
+            },
+        }
