@@ -16,6 +16,9 @@ from hunt.core.workspace import Workspace
 
 INBOX_STATUSES = ("pending", "promoted", "dismissed")
 DEFAULT_PENDING_CAP = 200
+INBOX_SORT_KEYS = ("created_at", "company", "role", "source_id", "net_month")
+INBOX_ORDERS = ("asc", "desc")
+INBOX_SORT_DEFAULT_DESC = frozenset({"created_at", "net_month"})
 
 
 def pending_cap(ws: Workspace) -> int:
@@ -137,6 +140,67 @@ def serialize_inbox_item(ws: Workspace, item: InboxItem) -> dict[str, Any]:
     data["below_floor"] = below_workspace_floor(ws, derived)
     data["display_currency"] = ws.display_currency
     return data
+
+
+def resolve_inbox_sort(
+    sort: str | None,
+    order: str | None,
+) -> tuple[str, str]:
+    key = (sort or "").strip() or "created_at"
+    if key not in INBOX_SORT_KEYS:
+        raise ValidationError(f"inbox sort must be one of {list(INBOX_SORT_KEYS)}")
+    raw = (order or "").strip().lower()
+    if not raw:
+        direction = "desc" if key in INBOX_SORT_DEFAULT_DESC else "asc"
+    else:
+        direction = raw
+        if direction not in INBOX_ORDERS:
+            raise ValidationError(f"inbox order must be one of {list(INBOX_ORDERS)}")
+    return key, direction
+
+
+def _sort_value(row: dict[str, Any], key: str) -> Any:
+    if key == "role":
+        val = row.get("role") or row.get("title")
+    else:
+        val = row.get(key)
+    if val is None:
+        return None
+    if isinstance(val, str) and val.strip() == "":
+        return ""
+    return val
+
+
+def sort_serialized_inbox(
+    rows: list[dict[str, Any]],
+    *,
+    sort: str | None = None,
+    order: str | None = None,
+) -> list[dict[str, Any]]:
+    key, direction = resolve_inbox_sort(sort, order)
+    reverse = direction == "desc"
+    present, missing = [], []
+    for row in rows:
+        val = _sort_value(row, key)
+        (missing if val is None or val == "" else present).append(row)
+    if key == "net_month":
+        present.sort(key=lambda r: float(r["net_month"]), reverse=reverse)
+    elif key == "created_at":
+        present.sort(key=lambda r: r.get("created_at") or "", reverse=reverse)
+    else:
+        present.sort(key=lambda r: str(_sort_value(r, key)).lower(), reverse=reverse)
+    return present + missing  # None / empty always last, both directions
+
+
+def serialize_inbox_list(
+    ws: Workspace,
+    items: list[InboxItem],
+    *,
+    sort: str | None = None,
+    order: str | None = None,
+) -> list[dict[str, Any]]:
+    rows = [serialize_inbox_item(ws, i) for i in items]
+    return sort_serialized_inbox(rows, sort=sort, order=order)
 
 
 def _parse_triage(raw: Any) -> dict[str, Any] | None:

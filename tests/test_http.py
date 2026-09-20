@@ -46,7 +46,9 @@ def _json(args, env, check=True):
 @pytest.fixture
 def workspace(tmp_path: Path):
     data = tmp_path / "workspace"
-    shutil.copytree(EXAMPLE, data, ignore=shutil.ignore_patterns("attachments"))
+    shutil.copytree(
+        EXAMPLE, data, ignore=shutil.ignore_patterns("attachments", "store.sqlite")
+    )
     env = {**os.environ, "HUNT_DATA": str(data), "PYTHONPATH": str(ROOT)}
     return data, env
 
@@ -335,8 +337,12 @@ def test_ui_visual_followup_mira_agu7():
     assert "<th>Floor</th>" not in js
     assert 'BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"]' in js
     assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
-    assert "<th>Source</th>" in js
-    assert "<th>Net /mo</th>" in js
+    assert 'INBOX_SORT_KEYS' in js
+    assert 'Source: "source_id"' in js
+    assert "INBOX_COLS.map" in js
+    assert 'data-inbox-sort="${esc(key)}"' in js
+    assert "<th>Net /mo</th>" not in js.split("function inboxThead")[0]
+    assert 'data-inbox-sort="source_id"' in js or 'Source: "source_id"' in js
     assert "<th>Floor</th>" not in js
     assert 'data-primitive="NetEstimate"' in js
     assert "${esc(money(derived.net_month))} ${esc(derived.display_currency)} /mo" in js
@@ -637,7 +643,12 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert "data-inbox-triage" in js
     assert "data-inbox-source" in js
     assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
-    assert "<th>Source</th>" in js
+    assert 'Source: "source_id"' in js
+    assert "function inboxThead" in js
+    assert "INBOX_COLS.map" in js
+    assert 'id="filter-search"' in js.split("function inboxFiltersHtml")[1].split("function inboxHeaderExtra")[0]
+    assert 'if (state.route.name === "inbox")' in js.split("[data-clear-filters]")[-1]
+    assert "function inboxHeaderExtra" in js
     assert "[data-primitive=\"PostingLink\"]" in css
 
     parsed = _eval_parse_route(js, "/profile")
@@ -676,6 +687,112 @@ def test_inbox_list_query_filters(client):
     assert [row["company"] for row in floor] == ["Floor Co"]
     src = http.get("/api/inbox?source=justjoin-sample").json()["inbox"]
     assert [row["company"] for row in src] == ["Floor Co"]
+
+
+def _seed_inbox_sort_rows(data):
+    with Workspace.open(data) as ws:
+        list_sources(ws)
+        ws.conn.execute("DELETE FROM inbox_items")
+        ws.conn.execute("DELETE FROM listings")
+        ws.conn.commit()
+        zulu = add_item(
+            ws,
+            company="Zulu Co",
+            title="Role Z",
+            source_id="justjoin-sample",
+            external_id="sort-z",
+        )
+        alpha = add_item(
+            ws,
+            company="Alpha Co",
+            title="Role A",
+            source_id="landing-jobs-eu",
+            external_id="sort-a",
+            payload={
+                "comp_quoted": {"amount": 14000, "currency": "EUR", "unit": "month"},
+                "tax_home_for_net": "pl_jdg",
+                "engagement": "b2b",
+            },
+        )
+        mid = add_item(
+            ws,
+            company="Mid Co",
+            title="Role M",
+            source_id="remotive-eu",
+            external_id="sort-m",
+            payload={
+                "comp_quoted": {"amount": 8000, "currency": "EUR", "unit": "month"},
+                "tax_home_for_net": "pl_jdg",
+                "engagement": "b2b",
+            },
+        )
+        none_pay = add_item(
+            ws,
+            company="None Pay",
+            title="Role N",
+            source_id="mail-alerts",
+            external_id="sort-n",
+        )
+        ws.conn.execute(
+            "UPDATE inbox_items SET created_at = ? WHERE id = ?",
+            ("2026-01-01T00:00:04Z", zulu.id),
+        )
+        ws.conn.execute(
+            "UPDATE inbox_items SET created_at = ? WHERE id = ?",
+            ("2026-01-01T00:00:03Z", alpha.id),
+        )
+        ws.conn.execute(
+            "UPDATE inbox_items SET created_at = ? WHERE id = ?",
+            ("2026-01-01T00:00:02Z", mid.id),
+        )
+        ws.conn.execute(
+            "UPDATE inbox_items SET created_at = ? WHERE id = ?",
+            ("2026-01-01T00:00:01Z", none_pay.id),
+        )
+        ws.conn.commit()
+        return {
+            "zulu": zulu.id,
+            "alpha": alpha.id,
+            "mid": mid.id,
+            "none": none_pay.id,
+        }
+
+
+def test_inbox_list_sort_order(client):
+    http, data, _env = client
+    _seed_inbox_sort_rows(data)
+    default = http.get("/api/inbox").json()["inbox"]
+    assert [row["company"] for row in default] == [
+        "Zulu Co",
+        "Alpha Co",
+        "Mid Co",
+        "None Pay",
+    ]
+    by_company = http.get("/api/inbox?sort=company").json()["inbox"]
+    assert [row["company"] for row in by_company] == [
+        "Alpha Co",
+        "Mid Co",
+        "None Pay",
+        "Zulu Co",
+    ]
+    by_source_desc = http.get("/api/inbox?sort=source_id&order=desc").json()["inbox"]
+    assert [row["source_id"] for row in by_source_desc] == [
+        "remotive-eu",
+        "mail-alerts",
+        "landing-jobs-eu",
+        "justjoin-sample",
+    ]
+    by_net = http.get("/api/inbox?sort=net_month").json()["inbox"]
+    companies = [row["company"] for row in by_net]
+    assert companies[-1] == "None Pay"
+    assert companies[0] == "Alpha Co"
+    assert companies[1] == "Mid Co"
+    none_last = http.get("/api/inbox?sort=net_month&order=asc").json()["inbox"]
+    assert [row["company"] for row in none_last][-1] == "None Pay"
+    unknown = http.get("/api/inbox?sort=nope")
+    assert unknown.status_code == 400
+    sideways = http.get("/api/inbox?order=sideways")
+    assert sideways.status_code == 400
 
 
 def test_restore_sets_keep_restored(client):

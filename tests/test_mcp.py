@@ -17,7 +17,9 @@ EXAMPLE = ROOT / "example-workspace"
 @pytest.fixture
 def data_dir(tmp_path: Path):
     data = tmp_path / "workspace"
-    shutil.copytree(EXAMPLE, data, ignore=shutil.ignore_patterns("attachments"))
+    shutil.copytree(
+        EXAMPLE, data, ignore=shutil.ignore_patterns("attachments", "store.sqlite")
+    )
     return data
 
 
@@ -75,6 +77,8 @@ def test_tools_list_covers_cli_nouns():
     inbox = next(t for t in reply["result"]["tools"] if t["name"] == "inbox_list")
     props = inbox["inputSchema"]["properties"]
     assert "source" in props and "knockout" in props and "triage" in props
+    assert "sort" in props and "order" in props
+    assert "enum" not in props["sort"] and "enum" not in props["order"]
 
 
 def test_mcp_promote_is_only_listing_path(data_dir: Path):
@@ -142,3 +146,53 @@ def test_restore_sets_keep_restored(data_dir: Path):
     err, payload = _call("inbox_restore", {"id": item_id}, data_dir)
     assert err["isError"] is True
     assert "dismissed" in payload["error"]
+
+
+def test_inbox_list_sort_order(data_dir: Path):
+    from hunt.core.inbox import add_item
+    from hunt.core.sources import list_sources
+    from hunt.core.workspace import Workspace
+
+    with Workspace.open(data_dir) as ws:
+        list_sources(ws)
+        ws.conn.execute("DELETE FROM inbox_items")
+        ws.conn.execute("DELETE FROM listings")
+        ws.conn.commit()
+        add_item(
+            ws,
+            company="Zulu Co",
+            title="Role Z",
+            source_id="justjoin-sample",
+            external_id="mcp-z",
+        )
+        add_item(
+            ws,
+            company="Alpha Co",
+            title="Role A",
+            source_id="landing-jobs-eu",
+            external_id="mcp-a",
+        )
+        add_item(
+            ws,
+            company="Mid Co",
+            title="Role M",
+            source_id="remotive-eu",
+            external_id="mcp-m",
+        )
+    _, by_company = _call("inbox_list", {"sort": "company"}, data_dir)
+    assert [row["company"] for row in by_company["inbox"]] == [
+        "Alpha Co",
+        "Mid Co",
+        "Zulu Co",
+    ]
+    _, by_source = _call(
+        "inbox_list", {"sort": "source_id", "order": "desc"}, data_dir
+    )
+    assert [row["source_id"] for row in by_source["inbox"]] == [
+        "remotive-eu",
+        "landing-jobs-eu",
+        "justjoin-sample",
+    ]
+    err, payload = _call("inbox_list", {"sort": "nope"}, data_dir)
+    assert err["isError"] is True
+    assert "sort" in payload["error"]

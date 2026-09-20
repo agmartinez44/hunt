@@ -43,6 +43,7 @@ from hunt.core.inbox import (
     promote,
     restore,
     serialize_inbox_item,
+    serialize_inbox_list,
 )
 from hunt.core.jobs import Job, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.pay import DerivedPay, QuotedPay, derive_pay, estimate_pay
@@ -89,6 +90,7 @@ __all__ = [
     "list_events",
     "list_inbox",
     "serialize_inbox_item",
+    "serialize_inbox_list",
     "list_jobs",
     "list_positions",
     "list_projects",

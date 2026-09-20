@@ -41,6 +41,13 @@
   };
   const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"];
   const INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
+  const INBOX_SORT_KEYS = {
+    Company: "company",
+    Role: "role",
+    Source: "source_id",
+    "Net /mo": "net_month",
+    Age: "created_at",
+  };
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
   const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
   const PROFILE_TABS = [
@@ -101,6 +108,9 @@
     inboxKnockout: "",
     inboxTriage: "",
     inboxSource: "",
+    inboxQuery: "",
+    inboxSort: "created_at",
+    inboxOrder: "desc",
     jobStateFilters: new Set(JOB_STATES),
     jobTypeFilters: new Set(JOB_TYPES),
     quotedDirty: false,
@@ -1092,11 +1102,51 @@
       })
       .join("");
     return `<div data-primitive="FilterBar" class="inbox-filters">
+      <input class="filter-search" id="filter-search" placeholder="Filter" value="${esc(state.inboxQuery)}">
       <button type="button" data-primitive="FilterChip" data-inbox-knockout="pay_below_floor|below_floor" aria-pressed="${floorOn}">Floor</button>
       <button type="button" data-primitive="FilterChip" data-inbox-triage="keep" aria-pressed="${keepOn}">Keep</button>
       <button type="button" data-primitive="FilterChip" data-inbox-triage="unsure" aria-pressed="${unsureOn}">Unsure</button>
       ${sourceChips}
     </div>`;
+  }
+
+  function inboxHeaderExtra(visible, items) {
+    const active = Boolean(
+      state.inboxQuery || state.inboxSource || state.inboxKnockout || state.inboxTriage
+    );
+    const n = visible.length;
+    const total = items.length;
+    const text = active && total ? `${n} / ${total}` : String(n);
+    return `<span class="page-count">${esc(text)}</span>`;
+  }
+
+  function inboxThead() {
+    const cells = INBOX_COLS.map((label) => {
+      const key = INBOX_SORT_KEYS[label];
+      if (!key) return `<th>${esc(label)}</th>`;
+      const active = state.inboxSort === key;
+      let aria = "none";
+      if (active) aria = state.inboxOrder === "desc" ? "descending" : "ascending";
+      return `<th data-inbox-sort="${esc(key)}" aria-sort="${aria}">${esc(label)}</th>`;
+    }).join("");
+    return `<thead><tr>${cells}</tr></thead>`;
+  }
+
+  function inboxVisible(items) {
+    const q = (state.inboxQuery || "").toLowerCase();
+    if (!q) return items.slice();
+    return items.filter((it) => {
+      const hay = [it.company, it.role || it.title, it.location, it.source_id]
+        .map((x) => String(x || "").toLowerCase())
+        .join(" ");
+      return hay.includes(q);
+    });
+  }
+
+  function inboxFiltersActive() {
+    return Boolean(
+      state.inboxQuery || state.inboxSource || state.inboxKnockout || state.inboxTriage
+    );
   }
 
   async function renderInbox(root, badges) {
@@ -1110,7 +1160,11 @@
     );
     let data;
     try {
-      const params = new URLSearchParams({ status });
+      const params = new URLSearchParams({
+        status,
+        sort: state.inboxSort,
+        order: state.inboxOrder,
+      });
       if (state.inboxSource) params.set("source", state.inboxSource);
       if (state.inboxKnockout) params.set("knockout", state.inboxKnockout);
       if (state.inboxTriage) params.set("triage", state.inboxTriage);
@@ -1120,25 +1174,29 @@
       return;
     }
     const items = data.inbox || [];
+    const visible = inboxVisible(items);
     const hint = pending ? "hunt inbox list --json" : "hunt inbox list --status dismissed --json";
     const actions = CommandHint(hint);
-    const header = pageHeader("Inbox", `<span class="page-count">${items.length}</span>`, actions) + tabs + inboxFiltersHtml(items);
-    if (!items.length) {
-      root.innerHTML = shell(
-        "inbox",
-        badges,
-        header +
-          EmptyState(
+    const header = pageHeader("Inbox", inboxHeaderExtra(visible, items), actions) + tabs + inboxFiltersHtml(items);
+    if (!visible.length) {
+      const filtered = inboxFiltersActive();
+      const empty = filtered
+        ? EmptyState(
+            "No listings in this view",
+            "Adjust filters or clear them to see listings.",
+            Btn("Clear filters", { variant: "ghost", attrs: "data-clear-filters" })
+          )
+        : EmptyState(
             pending ? "Inbox is clear" : "No dismissed listings",
             pending
               ? "No screened listings. Run a source or enqueue screen-inbox."
               : "Dismissed listings live here. Pending stays the default tab.",
             pending ? Btn("Open sources", { href: "/sources" }) : Btn("Pending inbox", { href: "/inbox" })
-          )
-      );
+          );
+      root.innerHTML = shell("inbox", badges, header + empty);
       return;
     }
-    const rows = items
+    const rows = visible
       .map((it) => {
         const q = quotedOf(it);
         const d = it.comp_derived;
@@ -1161,7 +1219,7 @@
         </tr>`;
       })
       .join("");
-    const cards = items
+    const cards = visible
       .map((it) => {
         const q = quotedOf(it);
         const d = it.comp_derived;
@@ -1191,7 +1249,7 @@
       badges,
       header +
         `<table data-primitive="DataTable" class="inbox-table">
-          <thead><tr><th>Company</th><th>Role</th><th>Source</th><th>Location</th><th>Engagement</th><th>Net /mo</th><th>Why keep</th><th>Why risk</th><th>Age</th><th>Actions</th><th>Id</th></tr></thead>
+          ${inboxThead()}
           <tbody>${rows}</tbody>
         </table>
         <div class="inbox-cards">${cards}</div>`
@@ -2637,8 +2695,15 @@
       return;
     }
     if (ev.target.closest("[data-clear-filters]")) {
-      state.boardFilters = new Set(OPEN_STATUSES);
-      state.boardQuery = "";
+      if (state.route.name === "inbox") {
+        state.inboxQuery = "";
+        state.inboxSource = "";
+        state.inboxKnockout = "";
+        state.inboxTriage = "";
+      } else {
+        state.boardFilters = new Set(OPEN_STATUSES);
+        state.boardQuery = "";
+      }
       render();
       return;
     }
@@ -2669,6 +2734,18 @@
     if (inboxTriage) {
       const value = inboxTriage.getAttribute("data-inbox-triage") || "";
       state.inboxTriage = state.inboxTriage === value ? "" : value;
+      render();
+      return;
+    }
+    const inboxSort = ev.target.closest("[data-inbox-sort]");
+    if (inboxSort) {
+      const key = inboxSort.getAttribute("data-inbox-sort") || "";
+      if (state.inboxSort === key) {
+        state.inboxOrder = state.inboxOrder === "desc" ? "asc" : "desc";
+      } else {
+        state.inboxSort = key;
+        state.inboxOrder = key === "created_at" || key === "net_month" ? "desc" : "asc";
+      }
       render();
       return;
     }
@@ -3256,7 +3333,8 @@
 
   document.addEventListener("input", (ev) => {
     if (ev.target.id === "filter-search") {
-      state.boardQuery = ev.target.value;
+      if (state.route.name === "inbox") state.inboxQuery = ev.target.value;
+      else state.boardQuery = ev.target.value;
     }
     if (ev.target.closest("#quoted-form")) {
       state.quotedDirty = true;
@@ -3357,7 +3435,8 @@
     }
     if (ev.key === "Enter" && ev.target.id === "filter-search") {
       ev.preventDefault();
-      state.boardQuery = ev.target.value;
+      if (state.route.name === "inbox") state.inboxQuery = ev.target.value;
+      else state.boardQuery = ev.target.value;
       render();
       return;
     }

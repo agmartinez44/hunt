@@ -43,7 +43,9 @@ def _json(args, env, check=True):
 @pytest.fixture
 def workspace(tmp_path: Path):
     data = tmp_path / "workspace"
-    shutil.copytree(EXAMPLE, data, ignore=shutil.ignore_patterns("attachments"))
+    shutil.copytree(
+        EXAMPLE, data, ignore=shutil.ignore_patterns("attachments", "store.sqlite")
+    )
     env = {**os.environ, "HUNT_DATA": str(data), "PYTHONPATH": str(ROOT)}
     return data, env
 
@@ -249,7 +251,9 @@ def test_human_table_and_error_without_workspace(tmp_path: Path):
     assert "workspace" in json.loads(missing.stderr)["error"].lower()
 
     data = tmp_path / "workspace"
-    shutil.copytree(EXAMPLE, data, ignore=shutil.ignore_patterns("attachments"))
+    shutil.copytree(
+        EXAMPLE, data, ignore=shutil.ignore_patterns("attachments", "store.sqlite")
+    )
     env["HUNT_DATA"] = str(data)
     empty = _run(["applications", "list"], env)
     assert empty.returncode == 0
@@ -397,3 +401,49 @@ def test_inbox_list_source_knockout_triage_flags(workspace):
         ["inbox", "list", "--knockout", "pay_below_floor|below_floor"], env
     )
     assert [row["company"] for row in floor["inbox"]] == ["Floor Co"]
+
+
+def test_inbox_list_sort_flags(workspace):
+    data, env = workspace
+    with Workspace.open(data) as ws:
+        list_sources(ws)
+        ws.conn.execute("DELETE FROM inbox_items")
+        ws.conn.execute("DELETE FROM listings")
+        ws.conn.commit()
+        add_item(
+            ws,
+            company="Zulu Co",
+            title="Role Z",
+            source_id="justjoin-sample",
+            external_id="cli-z",
+        )
+        add_item(
+            ws,
+            company="Alpha Co",
+            title="Role A",
+            source_id="landing-jobs-eu",
+            external_id="cli-a",
+        )
+        add_item(
+            ws,
+            company="Mid Co",
+            title="Role M",
+            source_id="remotive-eu",
+            external_id="cli-m",
+        )
+    _, by_company = _json(["inbox", "list", "--sort", "company"], env)
+    assert [row["company"] for row in by_company["inbox"]] == [
+        "Alpha Co",
+        "Mid Co",
+        "Zulu Co",
+    ]
+    _, by_source = _json(
+        ["inbox", "list", "--sort", "source_id", "--order", "desc"], env
+    )
+    assert [row["source_id"] for row in by_source["inbox"]] == [
+        "remotive-eu",
+        "landing-jobs-eu",
+        "justjoin-sample",
+    ]
+    bad = _run(["--json", "inbox", "list", "--sort", "nope"], env, check=False)
+    assert bad.returncode != 0

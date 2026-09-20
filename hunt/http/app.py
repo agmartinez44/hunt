@@ -63,6 +63,7 @@ from hunt.core.inbox import (
     promote,
     restore,
     serialize_inbox_item,
+    serialize_inbox_list,
 )
 from hunt.core.jobs import enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
@@ -322,19 +323,23 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         source: str | None = None,
         knockout: str | None = None,
         triage: str | None = None,
+        sort: str | None = None,
+        order: str | None = None,
         _: None = Depends(require_auth),
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            items = [
-                serialize_inbox_item(ws, i)
-                for i in list_inbox(
+            items = serialize_inbox_list(
+                ws,
+                list_inbox(
                     ws,
                     status=status,
                     source_id=source,
                     knockout=knockout,
                     triage_action=triage,
-                )
-            ]
+                ),
+                sort=sort,
+                order=order,
+            )
         return {"inbox": items}
 
     @app.post("/api/inbox/{item_id}/promote")

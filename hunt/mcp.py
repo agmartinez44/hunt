@@ -46,6 +46,7 @@ from hunt.core.inbox import (
     promote,
     restore,
     serialize_inbox_item,
+    serialize_inbox_list,
 )
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
@@ -130,12 +131,14 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool(
         "inbox_list",
-        "List inbox items. Filter with status, source, knockout, triage (keep|unsure|dismiss).",
+        "List inbox items. Filter with status, source, knockout, triage (keep|unsure|dismiss). Sort with sort/order.",
         {
             "status": {"type": "string"},
             "source": {"type": "string"},
             "knockout": {"type": "string"},
             "triage": {"type": "string"},
+            "sort": {"type": "string"},
+            "order": {"type": "string"},
         },
     ),
     _tool(
@@ -468,16 +471,18 @@ def _dispatch(name: str, arguments: dict[str, Any], ws: Workspace) -> dict[str, 
         return _ok({"application": app})
     if name == "inbox_list":
         status = arguments.get("status", "pending")
-        items = [
-            serialize_inbox_item(ws, i)
-            for i in list_inbox(
+        items = serialize_inbox_list(
+            ws,
+            list_inbox(
                 ws,
                 status=status,
                 source_id=arguments.get("source"),
                 knockout=arguments.get("knockout"),
                 triage_action=arguments.get("triage"),
-            )
-        ]
+            ),
+            sort=arguments.get("sort"),
+            order=arguments.get("order"),
+        )
         return _ok({"inbox": items})
     if name == "inbox_promote":
         item_id = arguments["id"]

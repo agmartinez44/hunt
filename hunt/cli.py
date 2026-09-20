@@ -52,6 +52,7 @@ from hunt.core.inbox import (
     promote,
     restore,
     serialize_inbox_item,
+    serialize_inbox_list,
 )
 from hunt.core.jobs import JOB_TYPES, enqueue as enqueue_job, get_job, list_jobs
 from hunt.core.sources import list_sources, run_source
@@ -272,16 +273,18 @@ def cmd_applications_update(args: argparse.Namespace) -> None:
 def cmd_inbox_list(args: argparse.Namespace) -> None:
     status = args.status
     with _open(args) as ws:
-        items = [
-            serialize_inbox_item(ws, i)
-            for i in list_inbox(
+        items = serialize_inbox_list(
+            ws,
+            list_inbox(
                 ws,
                 status=status,
                 source_id=args.source,
                 knockout=args.knockout,
                 triage_action=args.triage,
-            )
-        ]
+            ),
+            sort=args.sort,
+            order=args.order,
+        )
     if args.json:
         _dump_json({"inbox": items})
         return
@@ -1152,6 +1155,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["dismiss", "keep", "unsure"],
         help="Filter by Layer 2 triage action",
     )
+    p_in_list.add_argument("--sort", help="Allowlisted inbox sort key")
+    p_in_list.add_argument("--order", help="asc or desc")
     p_in_list.set_defaults(func=cmd_inbox_list)
 
     p_promote = inbox_verbs.add_parser(

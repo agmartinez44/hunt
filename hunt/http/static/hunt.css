@@ -361,6 +361,20 @@ main.page {
   background: var(--surface);
   min-width: 160px;
 }
+th[data-inbox-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+th[data-inbox-sort][aria-sort="ascending"]::after {
+  content: " ↑";
+  color: var(--text-muted);
+  font-weight: 400;
+}
+th[data-inbox-sort][aria-sort="descending"]::after {
+  content: " ↓";
+  color: var(--text-muted);
+  font-weight: 400;
+}
 
 .header-actions {
   display: flex;
