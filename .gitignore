@@ -16,3 +16,6 @@ store.sqlite
 example-workspace/attachments/
 example-workspace/store.sqlite
 example-workspace/secrets.env
+
+# Local harness copies. Product packs live in skills/.
+.claude/

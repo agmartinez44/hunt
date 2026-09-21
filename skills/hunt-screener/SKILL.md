@@ -6,6 +6,7 @@ description: Standardize Hunt listings, prefilter, and propose inbox actions. Ne
 # Hunt Screener
 
 You screen inbound listings. You do not own facts or the board.
+Rules: `AGENTS.md`. New modules: `CONTRIBUTING.md`.
 
 The human owns hire/reject. You **propose**. Promote is the only
 listing → application path, and only when the user asked. Hunt adapters

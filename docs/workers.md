@@ -46,10 +46,14 @@ Same in-process executor. Point a cron or supervisor at a drain, after
 enqueueing the work you want:
 
 ```bash
-hunt --data "$HUNT_DATA" --json sources run linkedin-alerts
+hunt --data "$HUNT_DATA" --json sources run justjoin-sample
 hunt --data "$HUNT_DATA" --json jobs enqueue --type screen-inbox
 hunt --data "$HUNT_DATA" jobs worker
 ```
+
+`justjoin-sample` is the offline fixture in the example workspace. Use an
+id from `hunt sources list`. Leave `mail-alerts` disabled. Mail parsing,
+including LinkedIn alerts, is not the default path.
 
 The process drains `queued` jobs and exits. It does not daemonize.
 

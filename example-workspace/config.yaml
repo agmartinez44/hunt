@@ -1,6 +1,7 @@
-# Fictional example workspace. Copy to $HUNT_DATA.
-# Runtime / CLI will read this; hunt.cv only needs knowledge/.
-# Tax rates and the floor are illustrative for Jane Doe — not tax advice.
+# Fictional Jane Doe workspace. Copy to $HUNT_DATA. Do not commit the copy.
+# Settings: docs/self-host.md. Setup: docs/onboarding.md.
+# Keys go in secrets.env. Leave bind on 127.0.0.1 and mail-alerts disabled.
+# Tax rates and the floor are illustrative — not tax advice.
 
 bind: "127.0.0.1"
 port: 8787

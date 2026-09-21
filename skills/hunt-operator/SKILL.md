@@ -10,6 +10,9 @@ tooling (`hunt.core`, `hunt.cv`) arbitrates. Workspace data is `$HUNT_DATA`
 (or `--data`). Never write a real person's YAML, mail, or PDFs into the
 Hunt source tree.
 
+Where to read: `AGENTS.md` (rules), `docs/onboarding.md` (new workspace),
+`docs/self-host.md` (modules and config), `CONTRIBUTING.md` (style and modules).
+
 Surfaces call the same domain layer: `hunt <noun> <verb> --json`,
 `hunt mcp` (stdio), later HTTP. Prefer `--json`. Exit non-zero is an error.
 

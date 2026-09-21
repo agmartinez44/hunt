@@ -6,7 +6,13 @@ without anyone's real biography.
 
 Copy it to a private `$HUNT_DATA` and replace the YAML with your own
 facts. Do not commit a real person's knowledge base, mail, or PDFs to
-the Hunt repo.
+the Hunt repo. The checklist is [docs/onboarding.md](../docs/onboarding.md).
+The settings map is [docs/self-host.md](../docs/self-host.md).
+
+Replace `knowledge/profile.yaml`, `positions.yaml`, `achievements.yaml`,
+`skills.yaml`, `projects.yaml`, and `integrity.yaml`. Leave
+`sources` → `mail-alerts` disabled. `contact.linkedin` in the profile is
+a CV URL, not a mailbox.
 
 ```
 example-workspace/
