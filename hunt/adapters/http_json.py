@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 from hunt.adapters import RawListing
 from hunt.core.errors import HuntError, ValidationError
+from hunt.core.pay import make_quoted
 
 JUSTJOIN_URL = "https://justjoin.it/api/candidate-api/offers"
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
@@ -266,6 +267,20 @@ def _justjoin_listing(
         "engagement": engagement,
         "experience_level": item.get("experienceLevel"),
     }
+    schedule = item.get("hybridWorkSchedule")
+    if isinstance(schedule, dict):
+        office = schedule.get("officeDays")
+        remote_days = schedule.get("remoteDays")
+        if office is not None:
+            try:
+                payload["office_days_per_week"] = float(office)
+            except (TypeError, ValueError):
+                pass
+        if remote_days is not None:
+            try:
+                payload["remote_days_per_week"] = float(remote_days)
+            except (TypeError, ValueError):
+                pass
     if quoted:
         payload["comp_quoted"] = quoted
     return RawListing(
@@ -280,12 +295,19 @@ def _justjoin_listing(
 def _justjoin_pay(employment_types: Any) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(employment_types, list) or not employment_types:
         return None, None
+    rows = [e for e in employment_types if isinstance(e, dict)]
+    if not rows:
+        return None, None
+    original = [
+        e
+        for e in rows
+        if str(e.get("currencySource") or "").lower() == "original"
+    ]
+    pool = original or rows
     ranked = sorted(
-        [e for e in employment_types if isinstance(e, dict)],
+        pool,
         key=lambda e: 0 if str(e.get("type") or "").lower() == "b2b" else 1,
     )
-    if not ranked:
-        return None, None
     row = ranked[0]
     raw_type = str(row.get("type") or "").lower()
     engagement = {"b2b": "b2b", "permanent": "fte", "uop": "uop"}.get(
@@ -297,13 +319,20 @@ def _justjoin_pay(employment_types: Any) -> tuple[dict[str, Any] | None, str | N
     amount = row.get("fromPerUnit")
     if amount is None:
         amount = row.get("from")
+    amount_to = row.get("toPerUnit")
+    if amount_to is None:
+        amount_to = row.get("to")
     currency = str(row.get("currency") or "").upper() or None
-    quoted = None
-    if amount is not None and currency:
-        try:
-            quoted = {"amount": float(amount), "currency": currency, "unit": unit}
-        except (TypeError, ValueError):
-            quoted = None
+    gross = row.get("gross")
+    gross_flag = bool(gross) if gross is not None else None
+    quoted = make_quoted(
+        amount=amount if amount is not None else None,
+        amount_to=amount_to if amount_to is not None else None,
+        currency=currency,
+        unit=unit,
+        gross=gross_flag,
+        undisclosed_ok=True,
+    )
     return quoted, engagement
 
 
@@ -339,11 +368,19 @@ def _remotive_pay(raw: Any) -> dict[str, Any] | None:
         return None
     try:
         amount = float(nums[0].replace(",", "."))
+        amount_to = float(nums[1].replace(",", ".")) if len(nums) >= 2 else None
     except ValueError:
         return None
     if amount <= 0:
         return None
-    return {"amount": amount, "currency": currency, "unit": unit}
+    if amount_to is not None and amount_to <= 0:
+        amount_to = None
+    return make_quoted(
+        amount=amount,
+        amount_to=amount_to,
+        currency=currency,
+        unit=unit,
+    )
 
 
 def _remotive_engagement(job_type: Any) -> str | None:
@@ -447,18 +484,15 @@ def _landing_listing(
         if city and country:
             break
     modality = "remote" if item.get("remote") else "onsite"
-    quoted = None
-    amount = item.get("gross_salary_low")
     currency = str(item.get("currency_code") or "").upper() or None
-    if amount is not None and currency:
-        try:
-            quoted = {
-                "amount": float(amount),
-                "currency": currency,
-                "unit": "year",
-            }
-        except (TypeError, ValueError):
-            quoted = None
+    quoted = make_quoted(
+        amount=item.get("gross_salary_low"),
+        amount_to=item.get("gross_salary_high"),
+        currency=currency,
+        unit="year",
+        gross=True,
+        undisclosed_ok=False,
+    )
     guid = str(item.get("id") or "").strip()
     payload: dict[str, Any] = {
         "company": company,

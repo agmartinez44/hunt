@@ -18,7 +18,19 @@
           "fromPerUnit": 50,
           "toPerUnit": 50,
           "unit": "hour",
-          "gross": false
+          "gross": false,
+          "currencySource": "original"
+        },
+        {
+          "type": "b2b",
+          "currency": "EUR",
+          "from": 45,
+          "to": 45,
+          "fromPerUnit": 45,
+          "toPerUnit": 45,
+          "unit": "hour",
+          "gross": false,
+          "currencySource": "converted"
         }
       ]
     },

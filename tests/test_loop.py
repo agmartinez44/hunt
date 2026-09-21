@@ -14,7 +14,12 @@ import pytest
 
 from urllib.parse import parse_qsl, urlparse
 
-from hunt.adapters.http_json import poll_http_json
+from hunt.adapters.http_json import (
+    _justjoin_listing,
+    _justjoin_pay,
+    _remotive_pay,
+    poll_http_json,
+)
 from hunt.adapters.imap_alerts import poll_imap_alerts
 from hunt.core.workspace import Workspace
 
@@ -330,8 +335,10 @@ def test_remotive_profile_keeps_europe_drops_usa():
     assert row.payload["location_city"] == "Europe"
     assert row.payload["comp_quoted"] == {
         "amount": 90.0,
+        "amount_to": 150.0,
         "currency": "USD",
         "unit": "hour",
+        "kind": "band",
     }
 
 
@@ -349,8 +356,11 @@ def test_landing_jobs_profile_maps_contract_and_fte():
     assert acme.payload["modality"] == "remote"
     assert acme.payload["location_country"] == "PL"
     assert acme.payload["comp_quoted"]["amount"] == 96000.0
+    assert acme.payload["comp_quoted"]["amount_to"] == 120000.0
     assert acme.payload["comp_quoted"]["currency"] == "EUR"
     assert acme.payload["comp_quoted"]["unit"] == "year"
+    assert acme.payload["comp_quoted"]["gross"] is True
+    assert acme.payload["comp_quoted"]["kind"] == "band"
     fte = by_company["No Hire Inc"]
     assert fte.payload["engagement"] == "fte"
     assert fte.payload["location_country"] == "PT"
@@ -503,6 +513,7 @@ def test_imap_alerts_skips_inmail_from_same_domain():
         "amount": 10000.0,
         "currency": "EUR",
         "unit": "month",
+        "kind": "fixed",
     }
 
 
@@ -606,6 +617,113 @@ def test_imap_rescreen_updates_listing_without_duplicate(workspace):
         assert row["id"] == inbox_id
         count = ws.conn.execute("SELECT COUNT(*) AS n FROM inbox_items").fetchone()["n"]
         assert count == 1
+
+
+def test_justjoin_pay_band_undisclosed_original_and_hybrid_days():
+    band, engagement = _justjoin_pay(
+        [
+            {
+                "type": "b2b",
+                "currency": "pln",
+                "from": 28350,
+                "to": 34230,
+                "fromPerUnit": 28350,
+                "toPerUnit": 34230,
+                "unit": "month",
+                "gross": False,
+                "currencySource": "original",
+            },
+            {
+                "type": "b2b",
+                "currency": "usd",
+                "from": 7000,
+                "to": 8500,
+                "fromPerUnit": 7000,
+                "toPerUnit": 8500,
+                "unit": "month",
+                "gross": False,
+                "currencySource": "converted",
+            },
+        ]
+    )
+    assert engagement == "b2b"
+    assert band == {
+        "amount": 28350.0,
+        "amount_to": 34230.0,
+        "currency": "PLN",
+        "unit": "month",
+        "gross": False,
+        "kind": "band",
+    }
+    hidden, _eng = _justjoin_pay(
+        [
+            {
+                "type": "b2b",
+                "currency": "PLN",
+                "from": None,
+                "to": None,
+                "fromPerUnit": None,
+                "toPerUnit": None,
+                "unit": "month",
+                "gross": False,
+                "currencySource": "original",
+            }
+        ]
+    )
+    assert hidden == {
+        "currency": "PLN",
+        "unit": "month",
+        "gross": False,
+        "kind": "undisclosed",
+    }
+    listing = _justjoin_listing(
+        {
+            "guid": "hybrid-1",
+            "title": "Staff SRE",
+            "companyName": "Hybrid Co",
+            "slug": "hybrid-sre",
+            "city": "Kraków",
+            "countryCode": "PL",
+            "workplaceType": "hybrid",
+            "hybridWorkSchedule": {"officeDays": 3, "remoteDays": 2},
+            "employmentTypes": [
+                {
+                    "type": "b2b",
+                    "currency": "PLN",
+                    "fromPerUnit": 20000,
+                    "toPerUnit": 20000,
+                    "unit": "month",
+                    "gross": False,
+                    "currencySource": "original",
+                }
+            ],
+        }
+    )
+    assert listing is not None
+    assert listing.payload["modality"] == "hybrid"
+    assert listing.payload["office_days_per_week"] == 3.0
+    assert listing.payload["remote_days_per_week"] == 2.0
+    assert listing.payload["comp_quoted"]["kind"] == "fixed"
+    assert "amount_to" not in listing.payload["comp_quoted"]
+
+
+def test_remotive_two_numbers_are_a_band():
+    quoted = _remotive_pay("$90 - $150 /hour")
+    assert quoted == {
+        "amount": 90.0,
+        "amount_to": 150.0,
+        "currency": "USD",
+        "unit": "hour",
+        "kind": "band",
+    }
+    single = _remotive_pay("€80 /hour")
+    assert single == {
+        "amount": 80.0,
+        "currency": "EUR",
+        "unit": "hour",
+        "kind": "fixed",
+    }
+    assert _remotive_pay("$90-$150") is None
 
 
 def test_adapter_sources_have_no_submit():

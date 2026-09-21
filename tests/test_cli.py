@@ -187,8 +187,11 @@ def test_inbox_promote_is_explicit(workspace):
     table = _run(["inbox", "list"], env)
     assert "ROLE" in table.stdout
     assert "SOURCE" in table.stdout
-    assert "NET/MO" in table.stdout
-    assert "WHY KEEP" in table.stdout
+    assert "EUR/MO" in table.stdout
+    assert "PROS" in table.stdout
+    assert "CONS" in table.stdout
+    assert "WHY KEEP" not in table.stdout
+    assert "NET/MO" not in table.stdout
     assert "FLOOR" not in table.stdout
     _, apps_before = _json(["applications", "list"], env)
     assert apps_before["applications"] == []

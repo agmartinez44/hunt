@@ -14,8 +14,10 @@ from hunt.core.inbox import (
     add_item,
     list_inbox,
     resolve_inbox_sort,
+    serialize_inbox_item,
     serialize_inbox_list,
     sort_serialized_inbox,
+    work_location_label,
 )
 from hunt.core.sources import list_sources
 from hunt.core.workspace import Workspace
@@ -40,7 +42,7 @@ def test_resolve_inbox_sort_defaults():
     assert resolve_inbox_sort("company", None) == ("company", "asc")
     assert resolve_inbox_sort("role", None) == ("role", "asc")
     assert resolve_inbox_sort("source_id", None) == ("source_id", "asc")
-    assert resolve_inbox_sort("net_month", None) == ("net_month", "desc")
+    assert resolve_inbox_sort("gross_month", None) == ("gross_month", "desc")
     assert resolve_inbox_sort("created_at", None) == ("created_at", "desc")
     assert resolve_inbox_sort("company", "desc") == ("company", "desc")
     with pytest.raises(ValidationError, match="inbox sort"):
@@ -49,20 +51,20 @@ def test_resolve_inbox_sort_defaults():
         resolve_inbox_sort("company", "sideways")
 
 
-def test_sort_serialized_inbox_missing_net_last():
+def test_sort_serialized_inbox_missing_gross_last():
     rows = [
-        {"company": "A", "net_month": 100, "created_at": "2026-01-01T00:00:03Z"},
-        {"company": "B", "net_month": None, "created_at": "2026-01-01T00:00:02Z"},
-        {"company": "C", "net_month": 50, "created_at": "2026-01-01T00:00:01Z"},
-        {"company": "D", "net_month": None, "created_at": "2026-01-01T00:00:00Z"},
+        {"company": "A", "gross_month": 100, "created_at": "2026-01-01T00:00:03Z"},
+        {"company": "B", "gross_month": None, "created_at": "2026-01-01T00:00:02Z"},
+        {"company": "C", "gross_month": 50, "created_at": "2026-01-01T00:00:01Z"},
+        {"company": "D", "gross_month": None, "created_at": "2026-01-01T00:00:00Z"},
     ]
-    desc = sort_serialized_inbox(rows, sort="net_month")
+    desc = sort_serialized_inbox(rows, sort="gross_month")
     assert [r["company"] for r in desc] == ["A", "C", "B", "D"]
-    asc = sort_serialized_inbox(rows, sort="net_month", order="asc")
+    asc = sort_serialized_inbox(rows, sort="gross_month", order="asc")
     assert [r["company"] for r in asc] == ["C", "A", "B", "D"]
     empty = sort_serialized_inbox(
-        [{"company": "E", "net_month": "", "created_at": "x"}],
-        sort="net_month",
+        [{"company": "E", "gross_month": "", "created_at": "x"}],
+        sort="gross_month",
         order="desc",
     )
     assert [r["company"] for r in empty] == ["E"]
@@ -100,5 +102,95 @@ def test_serialize_inbox_list_does_not_change_list_inbox(workspace):
             "company",
             "role",
             "source_id",
-            "net_month",
+            "gross_month",
         )
+
+
+def test_work_location_label_remote_vs_hq():
+    remote_hq, title = work_location_label(
+        {
+            "modality": "remote",
+            "location_city": "Warszawa",
+            "location_country": "PL",
+        }
+    )
+    assert remote_hq == "Remote · PL"
+    assert title == "Warszawa"
+    europe, europe_title = work_location_label(
+        {"modality": "remote", "location_city": "Europe"}
+    )
+    assert europe == "Remote · Europe"
+    assert europe_title is None
+    poland, poland_title = work_location_label(
+        {
+            "modality": "remote",
+            "location_city": "Poland",
+            "location_country": "PL",
+        }
+    )
+    assert poland == "Remote · Poland"
+    assert poland_title is None
+    bare, bare_title = work_location_label(
+        {"modality": "remote", "location_city": "Kraków"}
+    )
+    assert bare == "Remote"
+    assert bare_title == "Kraków"
+    hybrid_days, _ = work_location_label(
+        {
+            "modality": "hybrid",
+            "location_city": "Kraków",
+            "office_days_per_week": 3,
+        }
+    )
+    assert hybrid_days == "Hybrid · 3d Kraków"
+    hybrid, _ = work_location_label(
+        {"modality": "hybrid", "location_city": "Kraków"}
+    )
+    assert hybrid == "Hybrid · Kraków"
+    onsite, _ = work_location_label(
+        {"modality": "onsite", "location_city": "Copenhagen"}
+    )
+    assert onsite == "Onsite · Copenhagen"
+    missing, _ = work_location_label(
+        {"location_city": None, "location_country": "Ireland"}
+    )
+    assert missing == "Ireland"
+
+
+def test_serialize_inbox_gross_month_and_pay_month(workspace):
+    data, _env = workspace
+    with Workspace.open(data) as ws:
+        item = add_item(
+            ws,
+            company="Band Co",
+            title="SRE",
+            payload={
+                "comp_quoted": {
+                    "amount": 7500,
+                    "amount_to": 9000,
+                    "currency": "EUR",
+                    "unit": "month",
+                    "gross": False,
+                    "kind": "band",
+                },
+                "engagement": "b2b",
+                "modality": "remote",
+                "location_city": "Warszawa",
+                "location_country": "PL",
+            },
+        )
+        row = serialize_inbox_item(ws, item)
+    assert row["location"] == "Remote · PL"
+    assert row["location_title"] == "Warszawa"
+    assert row["gross_month"] == row["comp_derived"]["month"]
+    assert row["comp_derived"]["month_to"] == 9000.0
+    assert row["pay_month"]["line1"] == "€7.5–9.0k"
+    assert row["pay_month"]["caption"] == "B2B · band"
+    assert row["pay_month"]["kind"] == "band"
+    assert "€" not in row["pay_month"]["compact"]
+    with Workspace.open(data) as ws:
+        blank = add_item(ws, company="None Co", title="Ops")
+        empty = serialize_inbox_item(ws, blank)
+    assert empty["pay_month"]["line1"] == "—"
+    assert empty["pay_month"]["caption"] == "unknown"
+    assert empty["gross_month"] is None

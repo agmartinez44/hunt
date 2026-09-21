@@ -11,14 +11,60 @@ from typing import Any
 from hunt.core.applications import create_application, derive_for_workspace
 from hunt.core.errors import HuntError, NotFoundError, ValidationError
 from hunt.core.ids import new_id, now_iso
-from hunt.core.pay import QuotedPay, below_workspace_floor, engagement_label
+from hunt.core.pay import (
+    QuotedPay,
+    below_workspace_floor,
+    engagement_label,
+    normalize_country,
+    pay_month_view,
+    quoted_from_mapping,
+)
 from hunt.core.workspace import Workspace
 
 INBOX_STATUSES = ("pending", "promoted", "dismissed")
 DEFAULT_PENDING_CAP = 200
-INBOX_SORT_KEYS = ("created_at", "company", "role", "source_id", "net_month")
+INBOX_SORT_KEYS = ("created_at", "company", "role", "source_id", "gross_month")
 INBOX_ORDERS = ("asc", "desc")
-INBOX_SORT_DEFAULT_DESC = frozenset({"created_at", "net_month"})
+INBOX_SORT_DEFAULT_DESC = frozenset({"created_at", "gross_month"})
+
+# Remote scope: required location / region, never JustJoin HQ city.
+REMOTE_SCOPE_TOKENS = frozenset(
+    {
+        "europe",
+        "european",
+        "eea",
+        "emea",
+        "worldwide",
+        "anywhere",
+        "eu",
+        "global",
+    }
+    | {key.lower() for key in (
+        "CH", "CHE", "SWITZERLAND", "SWISS", "SUISSE", "SCHWEIZ", "SVIZZERA",
+        "ES", "ESP", "SPAIN", "ESPANA", "ESPAÑA",
+        "PL", "POL", "POLAND", "POLSKA",
+        "DE", "GER", "GERMANY", "DEUTSCHLAND",
+        "FR", "FRA", "FRANCE",
+        "NL", "NLD", "NETHERLANDS", "HOLLAND",
+        "PT", "PRT", "PORTUGAL",
+        "IE", "IRL", "IRELAND",
+        "GB", "UK", "GBR", "UNITED KINGDOM", "ENGLAND",
+        "US", "USA", "UNITED STATES",
+        "IT", "ITA", "ITALY", "ITALIA",
+        "SE", "SWE", "SWEDEN",
+        "NO", "NOR", "NORWAY",
+        "DK", "DNK", "DENMARK",
+        "FI", "FIN", "FINLAND",
+        "BE", "BEL", "BELGIUM",
+        "AT", "AUT", "AUSTRIA",
+        "CZ", "CZE", "CZECH", "CZECHIA",
+        "RO", "ROU", "ROMANIA",
+        "HU", "HUN", "HUNGARY",
+        "UA", "UKR", "UKRAINE",
+        "CA", "CAN", "CANADA",
+        "AU", "AUS", "AUSTRALIA",
+    )}
+)
 
 
 def pending_cap(ws: Workspace) -> int:
@@ -94,22 +140,102 @@ def location_label(
     return str(loc).strip() if loc else None
 
 
-def _quoted_pay(payload: dict[str, Any]) -> QuotedPay | None:
-    quoted = payload.get("comp_quoted")
-    if not isinstance(quoted, dict) or quoted.get("amount") is None:
+def _is_remote_scope(value: str | None) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    if normalize_country(text):
+        return True
+    folded = text.lower().replace(".", "")
+    if folded in REMOTE_SCOPE_TOKENS:
+        return True
+    return any(tok in REMOTE_SCOPE_TOKENS for tok in folded.replace("-", " ").split())
+
+
+def _days_token(value: Any) -> str | None:
+    if value is None or value == "":
         return None
     try:
-        return QuotedPay(
-            amount=float(quoted["amount"]),
-            currency=str(quoted.get("currency") or "EUR"),
-            unit=str(quoted.get("unit") or "month"),
-        )
+        n = float(value)
     except (TypeError, ValueError):
         return None
+    if n < 0:
+        return None
+    if n == int(n):
+        return f"{int(n)}d"
+    return f"{n}d"
+
+
+def work_location_label(
+    payload: dict[str, Any] | None,
+    *,
+    city: str | None = None,
+    country: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Modality-first inbox location. Returns ``(cell, title)``.
+
+    Remote JustJoin HQ city is not printed. Remotive ``Poland`` / ``Europe``
+    is scope. ``title`` is the dropped HQ city when useful.
+    """
+    data = payload or {}
+    city = city if city is not None else data.get("location_city")
+    country = country if country is not None else data.get("location_country")
+    city_s = str(city).strip() if city else ""
+    country_s = str(country).strip() if country else ""
+    modality = str(data.get("modality") or "").strip().lower()
+    office_days = data.get("office_days_per_week")
+
+    if modality == "remote":
+        if _is_remote_scope(city_s):
+            scope = city_s
+        elif country_s:
+            scope = country_s
+        else:
+            scope = None
+        label = f"Remote · {scope}" if scope else "Remote"
+        dropped = city_s if city_s and city_s != scope and not _is_remote_scope(city_s) else ""
+        if dropped.lower() in {"remote", "hybrid", "onsite", "office"}:
+            dropped = ""
+        return label, dropped or None
+
+    place = city_s or country_s
+    if modality == "hybrid":
+        days = _days_token(office_days)
+        if days and place:
+            return f"Hybrid · {days} {place}", None
+        if days:
+            return f"Hybrid · {days}", None
+        if place:
+            return f"Hybrid · {place}", None
+        return "Hybrid", None
+
+    if modality == "onsite":
+        if place:
+            return f"Onsite · {place}", None
+        return "Onsite", None
+
+    return location_label(data, city=city_s or None, country=country_s or None), None
+
+
+def _quoted_pay(payload: dict[str, Any]) -> QuotedPay | None:
+    return quoted_from_mapping(payload.get("comp_quoted"))
+
+
+def _quoted_out(payload: dict[str, Any], quoted: QuotedPay | None) -> dict[str, Any] | None:
+    raw = payload.get("comp_quoted")
+    if quoted:
+        return quoted.to_dict()
+    if isinstance(raw, dict):
+        out = dict(raw)
+        out.setdefault("kind", "undisclosed" if raw.get("currency") else "unknown")
+        return out
+    return None
 
 
 def serialize_inbox_item(ws: Workspace, item: InboxItem) -> dict[str, Any]:
-    """Human + agent inbox row. Net estimate is first-class; floor stays in derived JSON."""
+    """Human + agent inbox row. Gross month is first-class; net stays in derived JSON."""
     data = item.to_dict()
     payload = item.payload
     quoted = _quoted_pay(payload)
@@ -121,24 +247,34 @@ def serialize_inbox_item(ws: Workspace, item: InboxItem) -> dict[str, Any]:
         engagement=payload.get("engagement"),
     )
     derived_dict = derived.to_dict() if derived else None
-    location = location_label(payload)
+    quoted_dict = _quoted_out(payload, quoted)
+    location, location_title = work_location_label(payload)
     data["role"] = item.title
     data["location"] = location
+    if location_title:
+        data["location_title"] = location_title
     data["location_city"] = payload.get("location_city")
     data["location_country"] = payload.get("location_country")
     data["engagement"] = payload.get("engagement")
     data["engagement_label"] = engagement_label(payload.get("engagement"))
     data["modality"] = payload.get("modality")
+    data["office_days_per_week"] = payload.get("office_days_per_week")
     data["experience_level"] = payload.get("experience_level")
     data["source_id"] = item.source_id
     data["triage"] = item.triage
     data["triage_json"] = item.triage
-    data["comp_quoted"] = quoted.to_dict() if quoted else payload.get("comp_quoted")
+    data["comp_quoted"] = quoted_dict
     data["comp_derived"] = derived_dict
+    data["gross_month"] = derived.month if derived else None
     data["net_month"] = derived.net_month if derived else None
     data["clears_floor"] = derived.clears_floor if derived else None
     data["below_floor"] = below_workspace_floor(ws, derived)
     data["display_currency"] = ws.display_currency
+    data["pay_month"] = pay_month_view(
+        quoted_dict,
+        derived_dict,
+        display_currency=ws.display_currency,
+    )
     return data
 
 
@@ -183,8 +319,8 @@ def sort_serialized_inbox(
     for row in rows:
         val = _sort_value(row, key)
         (missing if val is None or val == "" else present).append(row)
-    if key == "net_month":
-        present.sort(key=lambda r: float(r["net_month"]), reverse=reverse)
+    if key == "gross_month":
+        present.sort(key=lambda r: float(r["gross_month"]), reverse=reverse)
     elif key == "created_at":
         present.sort(key=lambda r: r.get("created_at") or "", reverse=reverse)
     else:

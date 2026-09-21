@@ -318,3 +318,29 @@ def test_floor_month_for_workspace_ignores_tax_cell(workspace):
         ws.config["tax_homes"] = {}
         assert floor_month_for_workspace(ws) == 7000.0
         assert below_workspace_floor(ws, derived) is True
+
+
+def test_band_fx_month_to_and_floor_uses_low(workspace):
+    quoted = QuotedPay(
+        amount=6000,
+        amount_to=12000,
+        currency="EUR",
+        unit="month",
+        kind="band",
+    )
+    with Workspace.open(workspace) as ws:
+        derived = derive_pay(
+            quoted,
+            display_currency=ws.display_currency,
+            fx_as_of=ws.fx_as_of,
+            fx_rates=ws.fx_rates,
+            hours_per_month=ws.hours_per_month,
+            comp_floor=ws.comp_floor,
+        )
+        assert derived is not None
+        assert derived.month == 6000.0
+        assert derived.month_to == 12000.0
+        assert derived.year_to == 144000.0
+        # High 12k would clear; knockout still uses month low.
+        assert derived.month < 7000
+        assert below_workspace_floor(ws, derived) is True

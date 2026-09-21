@@ -40,13 +40,12 @@
     </svg>`,
   };
   const BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"];
-  const INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"];
+  const INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "EUR /mo", "Pros", "Cons", "Actions"];
   const INBOX_SORT_KEYS = {
     Company: "company",
     Role: "role",
     Source: "source_id",
-    "Net /mo": "net_month",
-    Age: "created_at",
+    "EUR /mo": "gross_month",
   };
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
   const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
@@ -188,6 +187,7 @@
 
   let themePref = readThemePref();
   let themeMenuOpen = false;
+  let rowMenuOpen = false;
 
   function setThemePref(pref) {
     if (pref !== "light" && pref !== "dark" && pref !== "system") pref = "system";
@@ -246,6 +246,7 @@
     if (!menu) return;
     const opening = btn.getAttribute("aria-expanded") !== "true";
     closeThemeMenu();
+    closeRowMenu();
     if (!opening) return;
     themeMenuOpen = true;
     btn.setAttribute("aria-expanded", "true");
@@ -269,6 +270,61 @@
     menu.style.visibility = "";
     const checked = menu.querySelector('[aria-checked="true"]');
     if (checked) checked.focus();
+  }
+
+  function closeRowMenu(restoreFocus) {
+    document.querySelectorAll("[data-primitive=RowMenu]").forEach((menu) => {
+      const id = menu.getAttribute("data-row-menu-for");
+      const trigger = id ? document.querySelector(`[data-primitive=IconBtn][data-row-menu="${id}"]`) : null;
+      const host = trigger && trigger.closest(".row-menu-host");
+      menu.hidden = true;
+      menu.style.position = "";
+      menu.style.top = "";
+      menu.style.right = "";
+      menu.style.left = "";
+      menu.style.visibility = "";
+      if (host && menu.parentElement !== host) host.appendChild(menu);
+    });
+    document.querySelectorAll("[data-primitive=IconBtn][data-row-menu]").forEach((btn) => {
+      const wasOpen = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", "false");
+      if (restoreFocus && wasOpen) btn.focus();
+    });
+    rowMenuOpen = false;
+  }
+
+  function openRowMenu(btn) {
+    const host = btn.closest(".row-menu-host");
+    const id = btn.getAttribute("data-row-menu");
+    const menu = (host && host.querySelector("[data-primitive=RowMenu]"))
+      || document.querySelector(`[data-primitive=RowMenu][data-row-menu-for="${id}"]`);
+    if (!menu) return;
+    const opening = btn.getAttribute("aria-expanded") !== "true";
+    closeThemeMenu();
+    closeRowMenu();
+    if (!opening) return;
+    rowMenuOpen = true;
+    btn.setAttribute("aria-expanded", "true");
+    const rect = btn.getBoundingClientRect();
+    document.body.appendChild(menu);
+    menu.hidden = false;
+    menu.style.position = "fixed";
+    menu.style.visibility = "hidden";
+    menu.style.top = "0";
+    menu.style.left = "0";
+    menu.style.right = "auto";
+    const mw = menu.offsetWidth;
+    const margin = 8;
+    let left = rect.right - mw;
+    if (left < margin) left = margin;
+    if (left + mw > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - mw - margin);
+    }
+    menu.style.top = `${Math.round(rect.bottom + 4)}px`;
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.visibility = "";
+    const first = menu.querySelector("[role=menuitem]");
+    if (first) first.focus();
   }
 
   function ThemeToggle() {
@@ -488,6 +544,39 @@
 
   function CommandHint(cmd) {
     return `<button type="button" data-primitive="CommandHint" data-copy="${esc(cmd)}" title="${esc(cmd)}">CLI</button>`;
+  }
+
+  function IconBtn(label, { attrs = "" } = {}) {
+    return `<button type="button" data-primitive="IconBtn" aria-label="${esc(label)}" title="${esc(label)}" ${attrs}>⋯</button>`;
+  }
+
+  function RowMenu(it, pending) {
+    const id = it && it.id;
+    if (!id) return "";
+    const cli = pending
+      ? `hunt inbox promote ${id} --json`
+      : `hunt inbox restore ${id} --json`;
+    return `<div class="row-menu-host">
+      ${IconBtn("More", { attrs: `data-row-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="false"` })}
+      <div data-primitive="RowMenu" role="menu" aria-label="More" hidden data-row-menu-for="${esc(id)}">
+        <button type="button" role="menuitem" data-copy="${esc(id)}">Copy ID</button>
+        <button type="button" role="menuitem" data-copy="${esc(cli)}">Copy CLI</button>
+      </div>
+    </div>`;
+  }
+
+  function PayMonth(it) {
+    const view = (it && it.pay_month) || {};
+    const line1 = view.line1 || "—";
+    const caption = view.caption || "unknown";
+    const title = view.title || "";
+    const empty = line1 === "—";
+    const cls = empty ? ` class="is-empty"` : "";
+    const titleAttr = title ? ` title="${esc(title)}"` : "";
+    const amount = empty
+      ? `<span class="placeholder">—</span>`
+      : `<strong>${esc(line1)}</strong>`;
+    return `<span data-primitive="PayMonth"${cls}${titleAttr}>${amount}<span class="caption">${esc(caption)}</span></span>`;
   }
 
   function StatusPill(status) {
@@ -1068,13 +1157,13 @@
     if (!pending) {
       return `<div class="inbox-actions">
             ${Btn("Restore", { attrs: `data-restore="${esc(it.id)}"` })}
-            ${CommandHint(`hunt inbox restore ${it.id} --json`)}
+            ${RowMenu(it, false)}
             </div>`;
     }
     return `<div class="inbox-actions">
             ${Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` })}
             ${Btn("Dismiss", { variant: "danger", attrs: `data-dismiss="${esc(it.id)}"` })}
-            ${CommandHint(`hunt inbox promote ${it.id} --json`)}
+            ${RowMenu(it, true)}
             </div>`;
   }
 
@@ -1098,7 +1187,7 @@
       ["company:desc", "Company Z–A"],
       ["role:asc", "Role"],
       ["source_id:asc", "Source"],
-      ["net_month:desc", "Net /mo"],
+      ["gross_month:desc", "EUR /mo"],
     ];
     const known = new Set(opts.map(([value]) => value));
     if (current && !known.has(current)) opts.push([current, "Current"]);
@@ -1265,41 +1354,30 @@
     }
     const rows = visible
       .map((it) => {
-        const q = quotedOf(it);
-        const d = it.comp_derived;
-        const pay = q
-          ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
-          : NetEstimate(d);
         const role = it.role || it.title || "";
+        const locTitle = it.location_title || it.location || "";
         return `<tr data-primitive="InboxRow" data-id="${esc(it.id)}">
           <td>${esc(it.company)}</td>
           <td>${PostingLink(it.url, role || "Posting")}</td>
           <td>${esc(it.source_id || "")}</td>
-          <td>${esc(locationOf(it))}</td>
+          <td title="${esc(locTitle)}">${esc(locationOf(it))}</td>
           <td>${engagementCell(it)}</td>
-          <td>${pay}</td>
+          <td>${PayMonth(it)}</td>
           <td title="${esc(it.why_keep || "")}">${esc(it.why_keep || "")}</td>
           <td title="${esc(it.why_risk || "")}">${esc(it.why_risk || "")}</td>
-          <td title="${esc(it.created_at)}">${esc(relative(it.created_at))}</td>
           <td>${inboxRowActions(it, pending)}</td>
-          <td>${CopyId(it.id)}</td>
         </tr>`;
       })
       .join("");
     const cards = visible
       .map((it) => {
-        const q = quotedOf(it);
-        const d = it.comp_derived;
-        const pay = q
-          ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
-          : NetEstimate(d);
         const role = it.role || it.title || "";
         const meta = [it.source_id, locationOf(it), engagementOf(it)].filter(Boolean).join(" · ");
         return `<article data-primitive="InboxRow" class="inbox-card">
-          <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${pending ? CommandHint(`hunt inbox promote ${it.id} --json`) : ""}</span></div>
+          <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${RowMenu(it, pending)}</span></div>
           <div>${PostingLink(it.url, role || "Posting")}</div>
           <div class="muted">${esc(meta)}</div>
-          <div>${pay}</div>
+          <div>${PayMonth(it)}</div>
           <div class="muted">${esc(it.why_keep || it.why_risk || "")}</div>
           <div class="row-actions">
             ${pending ? Btn("Promote", { variant: "primary", attrs: `data-promote="${esc(it.id)}"` }) : ""}
@@ -2686,6 +2764,7 @@
 
   async function render() {
     closeThemeMenu();
+    closeRowMenu();
     const root = document.getElementById("app");
     const prev = state.route;
     state.route = parseRoute();
@@ -2786,6 +2865,12 @@
       openThemeMenu(themeToggle);
       return;
     }
+    const rowMenuBtn = ev.target.closest("[data-primitive=IconBtn][data-row-menu]");
+    if (rowMenuBtn) {
+      ev.preventDefault();
+      openRowMenu(rowMenuBtn);
+      return;
+    }
     const themeOption = ev.target.closest("[data-theme-option]");
     if (themeOption) {
       ev.preventDefault();
@@ -2801,6 +2886,9 @@
     }
     if (themeMenuOpen && !ev.target.closest("[data-primitive=ThemeMenu]")) {
       closeThemeMenu();
+    }
+    if (rowMenuOpen && !ev.target.closest("[data-primitive=RowMenu]")) {
+      closeRowMenu();
     }
     const a = ev.target.closest("a[href], a[data-nav]");
     if (a) {
@@ -2830,6 +2918,7 @@
       setTimeout(() => {
         copy.textContent = prev;
       }, 1000);
+      if (copy.closest("[data-primitive=RowMenu]")) closeRowMenu();
       return;
     }
     const row = ev.target.closest("[data-href]");
@@ -3543,6 +3632,29 @@
   });
 
   document.addEventListener("keydown", (ev) => {
+    const rowMenu = ev.target.closest("[data-primitive=RowMenu]");
+    if (rowMenu && !rowMenu.hidden) {
+      const items = [...rowMenu.querySelectorAll("[role=menuitem]")];
+      const current = ev.target.closest("[role=menuitem]");
+      const idx = items.indexOf(current);
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeRowMenu(true);
+        return;
+      }
+      if (ev.key === "ArrowDown" || ev.key === "ArrowRight") {
+        ev.preventDefault();
+        const next = items[(Math.max(idx, 0) + 1) % items.length];
+        if (next) next.focus();
+        return;
+      }
+      if (ev.key === "ArrowUp" || ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        const prev = items[(idx <= 0 ? items.length : idx) - 1];
+        if (prev) prev.focus();
+        return;
+      }
+    }
     const themeMenu = ev.target.closest("[data-primitive=ThemeMenu]");
     if (themeMenu && !themeMenu.hidden) {
       const items = [...themeMenu.querySelectorAll("[data-theme-option]")];
@@ -3587,6 +3699,11 @@
     if (ev.key === "Escape" && themeMenuOpen) {
       ev.preventDefault();
       closeThemeMenu(true);
+      return;
+    }
+    if (ev.key === "Escape" && rowMenuOpen) {
+      ev.preventDefault();
+      closeRowMenu(true);
       return;
     }
     if (ev.key === "Escape" && state.dialog) {

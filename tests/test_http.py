@@ -392,7 +392,7 @@ def test_ui_visual_followup_mira_agu7():
     assert "FloorBadge" not in js
     assert "<th>Floor</th>" not in js
     assert 'BOARD_COLS = ["Company", "Title", "Status", "Modality", "Location", "Pay", "Updated", "Id"]' in js
-    assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
+    assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "EUR /mo", "Pros", "Cons", "Actions"]' in js
     assert 'INBOX_SORT_KEYS' in js
     assert 'Source: "source_id"' in js
     assert "INBOX_COLS.map" in js
@@ -700,7 +700,7 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert "data-inbox-knockout" in js
     assert "data-inbox-triage" in js
     assert "data-inbox-source" in js
-    assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "Net /mo", "Why keep", "Why risk", "Age", "Actions", "Id"]' in js
+    assert 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "EUR /mo", "Pros", "Cons", "Actions"]' in js
     assert 'Source: "source_id"' in js
     assert "function inboxThead" in js
     assert "INBOX_COLS.map" in js
@@ -850,15 +850,17 @@ def test_inbox_list_sort_order(client):
         "landing-jobs-eu",
         "justjoin-sample",
     ]
-    by_net = http.get("/api/inbox?sort=net_month").json()["inbox"]
-    companies = [row["company"] for row in by_net]
+    by_gross = http.get("/api/inbox?sort=gross_month").json()["inbox"]
+    companies = [row["company"] for row in by_gross]
     assert companies[-1] == "None Pay"
     assert companies[0] == "Alpha Co"
     assert companies[1] == "Mid Co"
-    none_last = http.get("/api/inbox?sort=net_month&order=asc").json()["inbox"]
+    none_last = http.get("/api/inbox?sort=gross_month&order=asc").json()["inbox"]
     assert [row["company"] for row in none_last][-1] == "None Pay"
     unknown = http.get("/api/inbox?sort=nope")
     assert unknown.status_code == 400
+    retired = http.get("/api/inbox?sort=net_month")
+    assert retired.status_code == 400
     sideways = http.get("/api/inbox?order=sideways")
     assert sideways.status_code == 400
 
@@ -959,6 +961,56 @@ def test_inbox_sources_polish_contracts():
     assert strip_js.find('muted">floor') < strip_js.find('muted">drop_on')
     assert strip_js.find('muted">drop_on') < strip_js.find('muted">pending cap')
     assert strip_js.find('muted">pending cap') < strip_js.find("title_include")
+
+
+def test_inbox_row_ux_paymonth_rowmenu_contracts():
+    """AGU-91: EUR/mo PayMonth, Pros/Cons, ⋯ menu, no Age/Id chrome."""
+    js = (ROOT / "hunt" / "http" / "static" / "app.js").read_text()
+    css = (ROOT / "hunt" / "http" / "static" / "hunt.css").read_text()
+    cols = 'INBOX_COLS = ["Company", "Role", "Source", "Location", "Engagement", "EUR /mo", "Pros", "Cons", "Actions"]'
+    assert cols in js
+    assert '", "Age"' not in js.split("const INBOX_COLS")[1].split(";")[0]
+    assert '", "Id"' not in js.split("const INBOX_COLS")[1].split(";")[0]
+    assert 'Age: "created_at"' not in js
+    assert '"Net /mo": "net_month"' not in js
+    assert '"EUR /mo": "gross_month"' in js
+    assert '["gross_month:desc", "EUR /mo"]' in js
+    assert '["created_at:desc", "Newest"]' in js
+    assert '["created_at:asc", "Oldest"]' in js
+    assert 'data-primitive="PayMonth"' in js
+    assert "function PayMonth" in js
+    assert "function RowMenu" in js
+    assert "function openRowMenu" in js
+    assert "function closeRowMenu" in js
+    assert 'aria-label="More"' in js
+    assert 'aria-haspopup="menu"' in js
+    assert "Copy ID" in js
+    assert "Copy CLI" in js
+    assert "function inboxRowActions" in js
+    assert "Btn(\"Promote\"" in js
+    inbox_fn = js.split("async function renderInbox")[1].split("async function renderSources")[0]
+    assert "api.x.ai" not in inbox_fn
+    assert "PayQuoted(q)" not in inbox_fn
+    assert "NetEstimate(d)" not in inbox_fn
+    assert "PayMonth(it)" in inbox_fn
+    assert "CopyId(it.id)" not in inbox_fn
+    assert "relative(it.created_at)" not in inbox_fn
+    rows = inbox_fn.split("const rows = visible")[1].split("const cards = visible")[0]
+    assert "inboxRowActions(it, pending)" in rows
+    actions = js.split("function inboxRowActions")[1].split("function inboxSourceChipIds")[0]
+    assert "RowMenu(it, true)" in actions
+    assert "RowMenu(it, false)" in actions
+    assert "Promote" in actions
+    assert "CommandHint" not in actions
+    cards = inbox_fn.split("const cards = visible")[1].split("root.innerHTML")[0]
+    assert "CopyId" not in cards
+    assert "CommandHint" not in cards
+    assert "RowMenu(it, pending)" in cards
+    assert "data-promote" in cards
+    assert "row-line1" in cards
+    assert "[data-primitive=\"PayMonth\"]" in css
+    assert "[data-primitive=\"RowMenu\"]" in css
+    assert "[data-primitive=\"IconBtn\"]" in css
 
 
 def test_restore_sets_keep_restored(client):

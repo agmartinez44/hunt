@@ -479,7 +479,9 @@ th[data-inbox-sort][aria-sort="descending"]::after {
   padding: 0;
 }
 [data-primitive="ThemeToggle"]:hover,
-[data-primitive="ThemeToggle"][aria-expanded="true"] {
+[data-primitive="ThemeToggle"][aria-expanded="true"],
+[data-primitive="IconBtn"]:hover,
+[data-primitive="IconBtn"][aria-expanded="true"] {
   background: var(--surface-2);
 }
 
@@ -533,6 +535,46 @@ th[data-inbox-sort][aria-sort="descending"]::after {
 }
 [data-primitive="ThemeMenu"] [role="menuitemradio"][aria-checked="true"] {
   background: var(--surface-2);
+}
+
+.row-menu-host {
+  position: relative;
+  flex: 0 0 auto;
+}
+[data-primitive="RowMenu"] {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 30;
+  min-width: 140px;
+  width: max-content;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-1);
+}
+[data-primitive="RowMenu"][hidden] {
+  display: none;
+}
+[data-primitive="RowMenu"] [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+[data-primitive="RowMenu"] [role="menuitem"]:hover,
+[data-primitive="RowMenu"] [role="menuitem"]:focus {
+  background: var(--surface-2);
+  outline: none;
 }
 .theme-menu-check {
   width: 12px;
@@ -774,6 +816,31 @@ th[data-inbox-sort][aria-sort="descending"]::after {
 .pay-cell [data-primitive="NetEstimate"] {
   display: block;
   margin-top: 2px;
+}
+
+[data-primitive="PayMonth"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  line-height: 16px;
+  color: var(--text);
+}
+[data-primitive="PayMonth"] strong {
+  font-weight: 600;
+  font-size: var(--text-md);
+}
+[data-primitive="PayMonth"] .caption {
+  display: block;
+  font-size: var(--text-xs);
+  line-height: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+[data-primitive="PayMonth"].is-empty .placeholder {
+  color: var(--text-faint);
+  font-weight: 400;
 }
 
 [data-primitive="CopyId"] {
@@ -1543,6 +1610,16 @@ th[data-inbox-sort][aria-sort="descending"]::after {
   }
   [data-primitive="ThemeMenu"] [role="menuitemradio"],
   [data-primitive="ThemeMenu"] [role="menuitemradio"]:has(.theme-menu-help) {
+    height: auto;
+    min-height: 44px;
+  }
+  [data-primitive="IconBtn"] {
+    min-width: 44px;
+    min-height: 44px;
+    width: 44px;
+    height: 44px;
+  }
+  [data-primitive="RowMenu"] [role="menuitem"] {
     height: auto;
     min-height: 44px;
   }

@@ -80,11 +80,19 @@ _LEGACY_BY_CELL = {cell: key for key, cell in _LEGACY_HOMES.items()}
 DISCLAIMER = "Estimate, not tax advice. Conversions are code, never an LLM net."
 
 
+QUOTED_KINDS = ("fixed", "band", "undisclosed")
+_UNIT_SHORT = {"hour": "h", "day": "d", "month": "mo", "year": "yr"}
+_CURRENCY_GLYPH = {"EUR": "€", "USD": "$", "GBP": "£"}
+
+
 @dataclass(frozen=True)
 class QuotedPay:
     amount: float
     currency: str
     unit: str
+    amount_to: float | None = None
+    gross: bool | None = None
+    kind: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "currency", self.currency.upper())
@@ -93,13 +101,24 @@ class QuotedPay:
             raise ValueError(f"comp unit must be one of {PAY_UNITS}, got {self.unit!r}")
         if self.amount < 0:
             raise ValueError("comp amount must be >= 0")
+        if self.amount_to is not None and self.amount_to < 0:
+            raise ValueError("comp amount_to must be >= 0")
+        if self.kind is not None and self.kind not in QUOTED_KINDS:
+            raise ValueError(f"comp kind must be one of {QUOTED_KINDS}, got {self.kind!r}")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "amount": self.amount,
             "currency": self.currency,
             "unit": self.unit,
         }
+        if self.amount_to is not None and self.amount_to != self.amount:
+            out["amount_to"] = self.amount_to
+        if self.gross is not None:
+            out["gross"] = self.gross
+        if self.kind:
+            out["kind"] = self.kind
+        return out
 
 
 @dataclass(frozen=True)
@@ -112,9 +131,11 @@ class DerivedPay:
     year: float
     net_month: float | None
     clears_floor: bool | None
+    month_to: float | None = None
+    year_to: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "display_currency": self.display_currency,
             "fx_as_of": self.fx_as_of,
             "hour": self.hour,
@@ -124,10 +145,212 @@ class DerivedPay:
             "net_month": self.net_month,
             "clears_floor": self.clears_floor,
         }
+        if self.month_to is not None:
+            out["month_to"] = self.month_to
+        if self.year_to is not None:
+            out["year_to"] = self.year_to
+        return out
 
 
 def _money(value: float) -> float:
     return round(float(value), 2)
+
+
+def compact_k(value: float) -> str:
+    """Thousands with one decimal, no cents. ``8000`` → ``8.0k``."""
+    return f"{float(value) / 1000.0:.1f}k"
+
+
+def compact_k_range(low: float, high: float | None) -> str:
+    """``8.0k`` or ``7.5–9.0k`` (en dash)."""
+    if high is None or float(high) == float(low):
+        return compact_k(low)
+    return f"{float(low) / 1000.0:.1f}–{float(high) / 1000.0:.1f}k"
+
+
+def display_currency_glyph(code: str | None) -> str:
+    text = (code or "").upper()
+    if text in _CURRENCY_GLYPH:
+        return _CURRENCY_GLYPH[text]
+    return f"{text} " if text else ""
+
+
+def quoted_kind(quoted: Mapping[str, Any] | None) -> str:
+    if not quoted:
+        return "unknown"
+    kind = quoted.get("kind")
+    if kind in QUOTED_KINDS:
+        return str(kind)
+    if quoted.get("amount") is None:
+        return "undisclosed" if quoted.get("currency") else "unknown"
+    amount_to = quoted.get("amount_to")
+    try:
+        if amount_to is not None and float(amount_to) != float(quoted["amount"]):
+            return "band"
+    except (TypeError, ValueError):
+        pass
+    return "fixed"
+
+
+def quoted_basis(quoted: Mapping[str, Any] | None) -> str | None:
+    if not quoted:
+        return None
+    gross = quoted.get("gross")
+    if gross is True:
+        return "gross"
+    if gross is False:
+        return "B2B"
+    return "quoted"
+
+
+def make_quoted(
+    *,
+    amount: float | None,
+    currency: str | None,
+    unit: str,
+    amount_to: float | None = None,
+    gross: bool | None = None,
+    undisclosed_ok: bool = False,
+) -> dict[str, Any] | None:
+    """Adapter helper: fixed / band / undisclosed. No inventing zeros."""
+    cur = str(currency).upper() if currency else None
+    unit_n = str(unit or "month").lower()
+    if unit_n not in PAY_UNITS:
+        unit_n = "month"
+    low = amount
+    high = amount_to
+    if low is None and high is None:
+        if undisclosed_ok and cur:
+            out: dict[str, Any] = {"currency": cur, "unit": unit_n, "kind": "undisclosed"}
+            if gross is not None:
+                out["gross"] = bool(gross)
+            return out
+        return None
+    if low is None:
+        low = high
+        high = None
+    try:
+        low_f = float(low)
+        high_f = float(high) if high is not None else None
+    except (TypeError, ValueError):
+        return None
+    if cur is None:
+        return None
+    out = {"amount": low_f, "currency": cur, "unit": unit_n}
+    if high_f is not None and high_f != low_f:
+        out["amount_to"] = high_f
+        out["kind"] = "band"
+    else:
+        out["kind"] = "fixed"
+    if gross is not None:
+        out["gross"] = bool(gross)
+    return out
+
+
+def quoted_from_mapping(quoted: Any) -> QuotedPay | None:
+    """FX input for the low end. Undisclosed / missing amount → None."""
+    if not isinstance(quoted, dict) or quoted.get("amount") is None:
+        return None
+    try:
+        amount_to = quoted.get("amount_to")
+        kwargs: dict[str, Any] = {
+            "amount": float(quoted["amount"]),
+            "currency": str(quoted.get("currency") or "EUR"),
+            "unit": str(quoted.get("unit") or "month"),
+        }
+        if amount_to is not None:
+            kwargs["amount_to"] = float(amount_to)
+        if quoted.get("gross") is not None:
+            kwargs["gross"] = bool(quoted["gross"])
+        kind = quoted.get("kind")
+        if kind in QUOTED_KINDS:
+            kwargs["kind"] = kind
+        else:
+            kwargs["kind"] = quoted_kind(quoted)
+        return QuotedPay(**kwargs)
+    except (TypeError, ValueError):
+        return None
+
+
+def _unit_short(unit: str | None) -> str:
+    key = str(unit or "month").lower()
+    return _UNIT_SHORT.get(key, key)
+
+
+def original_quote_title(quoted: Mapping[str, Any] | None) -> str | None:
+    """Tooltip: source currency compact, never a second visible line."""
+    if not quoted:
+        return None
+    currency = str(quoted.get("currency") or "").upper()
+    unit = _unit_short(quoted.get("unit"))
+    basis = quoted_basis(quoted)
+    kind = quoted_kind(quoted)
+    if kind == "undisclosed":
+        text = f"{currency} undisclosed /{unit}".strip()
+    elif quoted.get("amount") is None:
+        return None
+    else:
+        try:
+            low = float(quoted["amount"])
+            high = quoted.get("amount_to")
+            high_f = float(high) if high is not None else None
+        except (TypeError, ValueError):
+            return None
+        text = f"{currency} {compact_k_range(low, high_f)} /{unit}".strip()
+    if basis:
+        text = f"{text} · {basis}"
+    return text
+
+
+def pay_month_view(
+    quoted: Mapping[str, Any] | None,
+    derived: Mapping[str, Any] | None,
+    *,
+    display_currency: str,
+) -> dict[str, Any]:
+    """Inbox PayMonth: comparable display-currency month + basis · shape."""
+    kind = quoted_kind(quoted)
+    basis = quoted_basis(quoted)
+    glyph = display_currency_glyph(display_currency)
+    line1 = "—"
+    month = None
+    month_to = None
+    if isinstance(derived, Mapping):
+        month = derived.get("month")
+        month_to = derived.get("month_to")
+    if (
+        kind not in {"undisclosed", "unknown"}
+        and month is not None
+        and quoted
+        and quoted.get("amount") is not None
+    ):
+        try:
+            low = float(month)
+            high = float(month_to) if month_to is not None and kind == "band" else None
+            line1 = f"{glyph}{compact_k_range(low, high)}"
+        except (TypeError, ValueError):
+            line1 = "—"
+    if kind == "unknown":
+        caption = "unknown"
+    elif basis:
+        caption = f"{basis} · {kind}"
+    else:
+        caption = kind
+    compact = line1
+    for prefix in ("€", "$", "£"):
+        if compact.startswith(prefix):
+            compact = compact[len(prefix) :]
+            break
+    else:
+        if display_currency and compact.startswith(f"{display_currency} "):
+            compact = compact[len(display_currency) + 1 :]
+    return {
+        "line1": line1,
+        "compact": compact if line1 != "—" else "—",
+        "caption": caption,
+        "title": original_quote_title(quoted),
+        "kind": kind,
+    }
 
 
 def _fx_rate(
@@ -503,6 +726,16 @@ def estimate_pay(
         "month": month,
         "year": year,
     }
+    if quoted.amount_to is not None and quoted.amount_to != quoted.amount:
+        high = QuotedPay(
+            amount=quoted.amount_to,
+            currency=quoted.currency,
+            unit=quoted.unit,
+        )
+        hour_to = _money(_gross_hour(high, rate=rate, hours_per_month=hours_per_month))
+        month_to = _money(hour_to * hours_per_month)
+        payload["gross"]["month_to"] = month_to
+        payload["gross"]["year_to"] = _money(month_to * 12.0)
     assumptions["fx_rate"] = rate
     assumptions["fx_rates_used"] = {quoted.currency: rate}
 
@@ -580,4 +813,6 @@ def derive_pay(
         year=gross["year"],
         net_month=estimate["net_month"],
         clears_floor=estimate["clears_floor"],
+        month_to=gross.get("month_to"),
+        year_to=gross.get("year_to"),
     )

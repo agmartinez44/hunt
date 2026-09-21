@@ -297,7 +297,7 @@ def cmd_inbox_list(args: argparse.Namespace) -> None:
                 "source": i.get("source_id") or "",
                 "location": i.get("location") or "",
                 "engagement": i.get("engagement_label") or i.get("engagement") or "",
-                "net_month": _derived_net(i),
+                "eur_month": ((i.get("pay_month") or {}) or {}).get("compact") or "—",
                 "triage": ((i.get("triage") or {}) or {}).get("action") or "",
                 "knockouts": ", ".join(i.get("knockouts") or []),
                 "why_keep": i.get("why_keep") or "",
@@ -312,11 +312,11 @@ def cmd_inbox_list(args: argparse.Namespace) -> None:
             ("source", "SOURCE"),
             ("location", "LOCATION"),
             ("engagement", "ENGAGEMENT"),
-            ("net_month", "NET/MO"),
+            ("eur_month", "EUR/MO"),
             ("triage", "TRIAGE"),
             ("knockouts", "KNOCKOUTS"),
-            ("why_keep", "WHY KEEP"),
-            ("why_risk", "WHY RISK"),
+            ("why_keep", "PROS"),
+            ("why_risk", "CONS"),
         ],
     )
 

@@ -505,7 +505,7 @@ def _quoted_from_match(match: re.Match[str]) -> dict[str, Any] | None:
     unit = _UNITS.get(match.group("unit").lower())
     if not unit:
         return None
-    return {"amount": amount, "currency": currency, "unit": unit}
+    return {"amount": amount, "currency": currency, "unit": unit, "kind": "fixed"}
 
 
 def _first_job_url(text: str | None) -> str | None:

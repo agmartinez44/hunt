@@ -33,6 +33,7 @@ def test_subject_at_with_quoted_pay():
         "amount": 10000.0,
         "currency": "EUR",
         "unit": "month",
+        "kind": "fixed",
     }
 
 
@@ -59,6 +60,7 @@ def test_body_eml_beats_subject_and_extracts_canonical_fields():
         "amount": 90000.0,
         "currency": "EUR",
         "unit": "year",
+        "kind": "fixed",
     }
 
 
