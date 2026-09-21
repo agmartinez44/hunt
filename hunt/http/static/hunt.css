@@ -1259,6 +1259,9 @@ th[data-inbox-sort][aria-sort="descending"]::after {
   [data-primitive="FiltersStrip"] {
     grid-template-columns: 1fr 1fr;
   }
+  [data-primitive="FiltersStrip"] > div:nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }
 
 /* Profile / experience editor */
