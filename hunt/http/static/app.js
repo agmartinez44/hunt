@@ -1102,7 +1102,7 @@
       })
       .join("");
     return `<div data-primitive="FilterBar" class="inbox-filters">
-      <input class="filter-search" id="filter-search" placeholder="Filter" value="${esc(state.inboxQuery)}">
+      <input class="filter-search" id="filter-search" placeholder="Filter (Enter)" value="${esc(state.inboxQuery)}">
       <button type="button" data-primitive="FilterChip" data-inbox-knockout="pay_below_floor|below_floor" aria-pressed="${floorOn}">Floor</button>
       <button type="button" data-primitive="FilterChip" data-inbox-triage="keep" aria-pressed="${keepOn}">Keep</button>
       <button type="button" data-primitive="FilterChip" data-inbox-triage="unsure" aria-pressed="${unsureOn}">Unsure</button>
@@ -3539,6 +3539,13 @@
       return;
     }
     const tag = ev.target.tagName;
+    if (ev.key === "Enter" && ev.target.id === "filter-search") {
+      ev.preventDefault();
+      if (state.route.name === "inbox") state.inboxQuery = ev.target.value;
+      else state.boardQuery = ev.target.value;
+      render();
+      return;
+    }
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
       if (ev.key === "/" && ev.target.id !== "filter-search") return;
       if (ev.key !== "Escape") return;
@@ -3547,13 +3554,6 @@
       ev.preventDefault();
       const f = document.getElementById("filter-search");
       if (f) f.focus();
-      return;
-    }
-    if (ev.key === "Enter" && ev.target.id === "filter-search") {
-      ev.preventDefault();
-      if (state.route.name === "inbox") state.inboxQuery = ev.target.value;
-      else state.boardQuery = ev.target.value;
-      render();
       return;
     }
     if (ev.key === "g") {

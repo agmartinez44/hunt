@@ -583,6 +583,9 @@ th[data-inbox-sort][aria-sort="descending"]::after {
   z-index: 2;
   pointer-events: none;
 }
+[data-primitive="DataTable"] th[data-inbox-sort] {
+  pointer-events: auto;
+}
 [data-primitive="DataTable"] td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);

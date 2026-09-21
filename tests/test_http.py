@@ -703,6 +703,16 @@ def test_inbox_engagement_label_dismissed_status_and_ui_contracts(client):
     assert "function inboxThead" in js
     assert "INBOX_COLS.map" in js
     assert 'id="filter-search"' in js.split("function inboxFiltersHtml")[1].split("function inboxHeaderExtra")[0]
+    inbox_filters = js.split("function inboxFiltersHtml")[1].split("function inboxHeaderExtra")[0]
+    board_filters = js.split("function boardFiltersHtml")[1].split("function jobFiltersHtml")[0]
+    assert 'placeholder="Filter (Enter)"' in inbox_filters
+    assert 'placeholder="Filter"' in board_filters
+    assert 'placeholder="Filter (Enter)"' not in board_filters
+    keydown = js.split('document.addEventListener("keydown"')[1]
+    enter_apply = 'ev.key === "Enter" && ev.target.id === "filter-search"'
+    input_swallow = 'if (ev.key !== "Escape") return'
+    assert enter_apply in keydown
+    assert keydown.find(enter_apply) < keydown.find(input_swallow)
     assert 'if (state.route.name === "inbox")' in js.split("[data-clear-filters]")[-1]
     assert "function inboxHeaderExtra" in js
     assert "[data-primitive=\"PostingLink\"]" in css
@@ -849,6 +859,29 @@ def test_inbox_list_sort_order(client):
     assert unknown.status_code == 400
     sideways = http.get("/api/inbox?order=sideways")
     assert sideways.status_code == 400
+
+
+def test_inbox_sort_th_pointer_events_auto_wins():
+    """AGU-87: sticky DataTable th pass-through must not eat inbox sort clicks."""
+    css = (ROOT / "hunt" / "http" / "static" / "hunt.css").read_text()
+    blob = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    none_sel = '[data-primitive="DataTable"] th {'
+    auto_sel = '[data-primitive="DataTable"] th[data-inbox-sort] {'
+    assert none_sel in blob
+    assert auto_sel in blob
+    none_block = blob.split(none_sel, 1)[1].split("}", 1)[0]
+    auto_block = blob.split(auto_sel, 1)[1].split("}", 1)[0]
+    assert "pointer-events: none" in none_block
+    assert "pointer-events: auto" in auto_block
+    after = blob.split(auto_sel, 1)[1]
+    later = list(
+        re.finditer(
+            r"th\[data-inbox-sort\][^{]*\{([^}]*)\}",
+            after,
+        )
+    )
+    for match in later:
+        assert "pointer-events: none" not in match.group(1)
 
 
 def test_restore_sets_keep_restored(client):
