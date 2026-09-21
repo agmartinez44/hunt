@@ -439,7 +439,9 @@ def test_ui_polish_net_estimate_and_plex():
     assert "inbox-actions" in js
     assert "Add a tax home to estimate net." in js
     assert 'data-primitive="FloorBadge"' not in blob
-    assert "below floor" not in blob.lower()
+    before, _, rest = js.partition("function inboxEmptyCopy")
+    after = rest.split("function inboxFiltersHtml", 1)[-1]
+    assert "below floor" not in (before + after + css + html).lower()
     assert "clears_floor" not in blob
     assert "<th>Floor</th>" not in js
     assert ".floor-clears" not in css
@@ -882,6 +884,81 @@ def test_inbox_sort_th_pointer_events_auto_wins():
     )
     for match in later:
         assert "pointer-events: none" not in match.group(1)
+
+
+def test_inbox_sources_polish_contracts():
+    """AGU-89: idle caret, Enter/Esc order, empty copy, stable source chips."""
+    js = (ROOT / "hunt" / "http" / "static" / "app.js").read_text()
+    css = (ROOT / "hunt" / "http" / "static" / "hunt.css").read_text()
+    polish = js.split("function inboxSourceChipIds")[1].split("async function renderJobs")[0]
+    assert "api.x.ai" not in polish
+    assert "fetch(" not in polish
+
+    inbox_block = js.split("function inboxSourceChipIds")[1].split("function inboxThead")[0]
+    inbox_filters = js.split("function inboxFiltersHtml")[1].split("function inboxHeaderExtra")[0]
+    assert 'id="filter-search"' in inbox_filters
+    assert 'type="search"' in inbox_filters
+    assert "Company, role, location, source" in inbox_filters
+    assert 'id="inbox-order"' in inbox_filters
+    assert "data-inbox-order" in inbox_filters
+    assert "Newest" in inbox_block
+    assert "Oldest" in inbox_block
+    assert "Company A–Z" in inbox_block
+    assert "Company Z–A" in inbox_block
+    assert "it.source_id" not in inbox_filters
+    assert "inboxSourceChipIds" in inbox_filters
+    assert "data-clear-filters" in inbox_filters
+    assert "chip-row" in inbox_filters
+
+    extra = js.split("function inboxHeaderExtra")[1].split("function inboxThead")[0]
+    assert 'href="/sources"' in extra
+    assert "drop_on:" not in extra
+    assert "cap ${esc(capText)}" in extra
+    assert "pending_count" in extra
+
+    assert "function inboxEmptyCopy" in js
+    assert "Nothing below floor in pending" in js
+    assert "No Keep listings yet" in js
+    assert "No Unsure listings yet" in js
+    assert 'Btn("Clear filters", { variant: "primary", attrs: "data-clear-filters" })' in js
+
+    inbox_fn = js.split("async function renderInbox")[1].split("async function renderSources")[0]
+    assert 'api("/api/sources")' in inbox_fn
+    assert 'PostingLink(it.url, "Posting")' not in inbox_fn
+    cards = inbox_fn.split("const cards = visible")[1].split(".join")[0]
+    assert "relative(it.created_at)" not in cards
+    assert "Age" not in cards
+
+    keydown = js.split('document.addEventListener("keydown"')[1]
+    enter_apply = 'ev.key === "Enter" && ev.target.id === "filter-search"'
+    esc_clear = 'ev.key === "Escape" && ev.target.id === "filter-search"'
+    input_swallow = 'if (ev.key !== "Escape") return'
+    assert enter_apply in keydown
+    assert esc_clear in keydown
+    assert keydown.find(enter_apply) < keydown.find(input_swallow)
+    assert keydown.find(esc_clear) < keydown.find(input_swallow)
+    assert "restoreFilterSearchCaret" in js
+    assert "setSelectionRange" in js
+    assert 'classList.toggle("is-pending"' in js
+
+    assert '[aria-sort="none"]::after' in css
+    assert "↕" in css
+    assert ".filter-search.is-pending" in css
+    assert "padding: 2px" in css.split(".chip-row")[1][:400]
+    assert "text-overflow: ellipsis" in css.split(".inbox-table td:nth-child(7)")[1][:400]
+    assert ".inbox-order { display: none; }" in css or ".inbox-order { display: none }" in css.replace("\n", " ")
+    strip = css.split('[data-primitive="FiltersStrip"]')[1][:500]
+    assert "display: grid" in strip
+
+    assert "function inboxSourceChipIds" in js
+    assert "config (read-only)" in js
+    assert "listings ·" in js
+    assert "function isSecretConfigKey" in js
+    assert 'k.endsWith("_env")' in js.split("function isSecretConfigKey")[1][:400]
+    strip_js = js.split("function filtersStripHtml")[1].split("async function renderSources")[0]
+    assert strip_js.find('muted">floor') < strip_js.find('muted">drop_on')
+    assert strip_js.find('muted">drop_on') < strip_js.find('muted">pending cap')
+    assert strip_js.find('muted">pending cap') < strip_js.find("title_include")
 
 
 def test_restore_sets_keep_restored(client):

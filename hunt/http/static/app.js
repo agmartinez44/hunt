@@ -1078,53 +1078,103 @@
             </div>`;
   }
 
-  function inboxFiltersHtml(items) {
+  function inboxSourceChipIds(apiSources) {
+    const rows = Array.isArray(apiSources) ? apiSources : [];
+    const enabled = rows.filter((s) => s && s.id && s.enabled);
+    let list = enabled.filter((s) => Number(s.inbox_count) > 0);
+    if (!list.length) list = enabled.slice();
+    list.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+    const ids = list.map((s) => s.id);
+    if (state.inboxSource && !ids.includes(state.inboxSource)) ids.unshift(state.inboxSource);
+    return ids;
+  }
+
+  function inboxOrderOptions() {
+    const current = `${state.inboxSort}:${state.inboxOrder}`;
+    const opts = [
+      ["created_at:desc", "Newest"],
+      ["created_at:asc", "Oldest"],
+      ["company:asc", "Company A–Z"],
+      ["company:desc", "Company Z–A"],
+      ["role:asc", "Role"],
+      ["source_id:asc", "Source"],
+      ["net_month:desc", "Net /mo"],
+    ];
+    const known = new Set(opts.map(([value]) => value));
+    if (current && !known.has(current)) opts.push([current, "Current"]);
+    return opts
+      .map(([value, label]) => {
+        const sel = value === current ? " selected" : "";
+        return `<option value="${esc(value)}"${sel}>${esc(label)}</option>`;
+      })
+      .join("");
+  }
+
+  function inboxEmptyCopy() {
+    if (state.inboxKnockout === "pay_below_floor|below_floor") {
+      return {
+        title: "Nothing below floor in pending",
+        body: "Below-floor listings are dropped at screen (drop_on includes pay_below_floor). Pay-unknown rows stay in All — they are not Floor.",
+      };
+    }
+    if (state.inboxTriage === "keep") {
+      return {
+        title: "No Keep listings yet",
+        body: "Keep is empty until a listing is triaged Keep. Screening does not write Keep by itself.",
+      };
+    }
+    if (state.inboxTriage === "unsure") {
+      return {
+        title: "No Unsure listings yet",
+        body: "Unsure is empty until a listing is triaged Unsure.",
+      };
+    }
+    if (state.inboxQuery || state.inboxSource) {
+      return {
+        title: "No listings in this view",
+        body: "Nothing matches this filter. Clear filters to see pending.",
+      };
+    }
+    return null;
+  }
+
+  function inboxFiltersHtml(apiSources) {
     const floorOn = state.inboxKnockout === "pay_below_floor|below_floor";
     const keepOn = state.inboxTriage === "keep";
     const unsureOn = state.inboxTriage === "unsure";
-    const sources = [];
-    const seen = new Set();
-    if (state.inboxSource) {
-      sources.push(state.inboxSource);
-      seen.add(state.inboxSource);
-    }
-    for (const it of items || []) {
-      const sid = it.source_id;
-      if (sid && !seen.has(sid)) {
-        seen.add(sid);
-        sources.push(sid);
-      }
-    }
-    const sourceChips = sources
+    const sourceChips = inboxSourceChipIds(apiSources)
       .map((sid) => {
         const on = state.inboxSource === sid;
         return `<button type="button" data-primitive="FilterChip" data-inbox-source="${esc(sid)}" aria-pressed="${on}">${esc(sid)}</button>`;
       })
       .join("");
+    const clear = inboxFiltersActive()
+      ? Btn("Clear filters", { variant: "ghost", attrs: "data-clear-filters" })
+      : "";
     return `<div data-primitive="FilterBar" class="inbox-filters">
-      <input class="filter-search" id="filter-search" placeholder="Filter (Enter)" value="${esc(state.inboxQuery)}">
+      <input class="filter-search" id="filter-search" type="search" placeholder="Filter (Enter)" title="Company, role, location, source. / focuses. Enter applies. Esc clears." value="${esc(state.inboxQuery)}" autocomplete="off">
+      <select data-primitive="Select" class="inbox-order" id="inbox-order" aria-label="Order" data-inbox-order>${inboxOrderOptions()}</select>
+      <div class="chip-row">
       <button type="button" data-primitive="FilterChip" data-inbox-knockout="pay_below_floor|below_floor" aria-pressed="${floorOn}">Floor</button>
       <button type="button" data-primitive="FilterChip" data-inbox-triage="keep" aria-pressed="${keepOn}">Keep</button>
       <button type="button" data-primitive="FilterChip" data-inbox-triage="unsure" aria-pressed="${unsureOn}">Unsure</button>
       ${sourceChips}
+      ${clear}
+      </div>
     </div>`;
   }
 
   function inboxHeaderExtra(visible, items, filters) {
-    const active = Boolean(
-      state.inboxQuery || state.inboxSource || state.inboxKnockout || state.inboxTriage
-    );
-    const n = visible.length;
-    const total = items.length;
-    const text = active && total ? `${n} / ${total}` : String(n);
+    const pendingCount = filters && filters.inbox && filters.inbox.pending_count;
+    const pendingTotal =
+      state.inboxStatus !== "dismissed" && pendingCount != null ? pendingCount : items.length;
+    const text = inboxFiltersActive() ? `${visible.length} / ${pendingTotal}` : String(pendingTotal);
     const count = `<span class="page-count">${esc(text)}</span>`;
     if (!filters) return count;
     const cap = (filters.inbox || {}).pending_cap;
     const pending = (filters.inbox || {}).pending_count;
     const capText = cap === 0 ? `${pending}/unlimited` : `${pending}/${cap}`;
-    const drop = ((filters.knockouts || {}).drop_on || []).filter(Boolean);
-    const dropText = drop.length ? ` · drop_on: ${drop.join(", ")}` : "";
-    return `${count}<span class="inbox-filter-summary"><a href="/sources">cap ${esc(capText)}${esc(dropText)}</a></span>`;
+    return `${count}<span class="inbox-filter-summary"><a href="/sources">cap ${esc(capText)}</a></span>`;
   }
 
   function inboxThead() {
@@ -1134,7 +1184,7 @@
       const active = state.inboxSort === key;
       let aria = "none";
       if (active) aria = state.inboxOrder === "desc" ? "descending" : "ascending";
-      return `<th data-inbox-sort="${esc(key)}" aria-sort="${aria}">${esc(label)}</th>`;
+      return `<th data-inbox-sort="${esc(key)}" aria-sort="${aria}" tabindex="0">${esc(label)}</th>`;
     }).join("");
     return `<thead><tr>${cells}</tr></thead>`;
   }
@@ -1167,6 +1217,7 @@
     );
     let data;
     let filters = null;
+    let apiSources = [];
     try {
       const params = new URLSearchParams({
         status,
@@ -1179,9 +1230,11 @@
       const fetched = await Promise.all([
         api(`/api/inbox?${params.toString()}`),
         api("/api/workspace/filters").catch(() => null),
+        api("/api/sources").catch(() => ({ sources: [] })),
       ]);
       data = fetched[0];
       filters = fetched[1];
+      apiSources = (fetched[2] && fetched[2].sources) || [];
     } catch (err) {
       root.innerHTML = shell("inbox", badges, ErrorBanner(err.message));
       return;
@@ -1190,14 +1243,15 @@
     const visible = inboxVisible(items);
     const hint = pending ? "hunt inbox list --json" : "hunt inbox list --status dismissed --json";
     const actions = CommandHint(hint);
-    const header = pageHeader("Inbox", inboxHeaderExtra(visible, items, filters), actions) + tabs + inboxFiltersHtml(items);
+    const header = pageHeader("Inbox", inboxHeaderExtra(visible, items, filters), actions) + tabs + inboxFiltersHtml(apiSources);
     if (!visible.length) {
       const filtered = inboxFiltersActive();
+      const copy = filtered && inboxEmptyCopy();
       const empty = filtered
         ? EmptyState(
-            "No listings in this view",
-            "Adjust filters or clear them to see listings.",
-            Btn("Clear filters", { variant: "ghost", attrs: "data-clear-filters" })
+            (copy && copy.title) || "No listings in this view",
+            (copy && copy.body) || "Adjust filters or clear them to see listings.",
+            Btn("Clear filters", { variant: "primary", attrs: "data-clear-filters" })
           )
         : EmptyState(
             pending ? "Inbox is clear" : "No dismissed listings",
@@ -1224,8 +1278,8 @@
           <td>${esc(locationOf(it))}</td>
           <td>${engagementCell(it)}</td>
           <td>${pay}</td>
-          <td>${esc(it.why_keep || "")}</td>
-          <td>${esc(it.why_risk || "")}</td>
+          <td title="${esc(it.why_keep || "")}">${esc(it.why_keep || "")}</td>
+          <td title="${esc(it.why_risk || "")}">${esc(it.why_risk || "")}</td>
           <td title="${esc(it.created_at)}">${esc(relative(it.created_at))}</td>
           <td>${inboxRowActions(it, pending)}</td>
           <td>${CopyId(it.id)}</td>
@@ -1241,11 +1295,9 @@
           : NetEstimate(d);
         const role = it.role || it.title || "";
         const meta = [it.source_id, locationOf(it), engagementOf(it)].filter(Boolean).join(" · ");
-        const posting = it.url ? `<div>${PostingLink(it.url, "Posting")}</div>` : "";
         return `<article data-primitive="InboxRow" class="inbox-card">
           <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${CopyId(it.id)}${pending ? CommandHint(`hunt inbox promote ${it.id} --json`) : ""}</span></div>
           <div>${PostingLink(it.url, role || "Posting")}</div>
-          ${posting}
           <div class="muted">${esc(meta)}</div>
           <div>${pay}</div>
           <div class="muted">${esc(it.why_keep || it.why_risk || "")}</div>
@@ -1318,12 +1370,27 @@
     const lines = sourceConfigLines(source);
     if (!lines.length) return "";
     const body = lines.map((l) => `<div class="source-config-line">${esc(l)}</div>`).join("");
-    return `<details class="source-config"><summary>config</summary>${body}</details>`;
+    return `<details class="source-config"><summary>config (read-only)</summary>${body}</details>`;
   }
 
   function filtersStripHtml(filters) {
     if (!filters) return "";
     const kn = filters.knockouts || {};
+    const parts = [];
+    const floor = filters.floor;
+    const floorText =
+      floor && floor.amount != null
+        ? `${floor.amount} ${floor.currency || ""} / ${floor.unit || ""}`.trim()
+        : "no comp_floor";
+    parts.push(`<div><span class="muted">floor</span> ${esc(floorText)}</div>`);
+    const drop = kn.drop_on || [];
+    parts.push(`<div><span class="muted">drop_on</span> ${esc(drop.length ? drop.join(", ") : "—")}</div>`);
+    const inbox = filters.inbox || {};
+    const capText =
+      inbox.pending_cap === 0
+        ? `unlimited (${inbox.pending_count} pending)`
+        : `${inbox.pending_count} / ${inbox.pending_cap}`;
+    parts.push(`<div><span class="muted">pending cap</span> ${esc(capText)}</div>`);
     const listKeys = [
       "title_include",
       "title_exclude",
@@ -1332,7 +1399,6 @@
       "engagement_allow",
       "languages_block",
     ];
-    const parts = [];
     let any = false;
     for (const k of listKeys) {
       const vals = kn[k] || [];
@@ -1342,20 +1408,6 @@
       }
     }
     if (!any) parts.push(`<div>no knockouts in config.yaml</div>`);
-    const drop = kn.drop_on || [];
-    parts.push(`<div><span class="muted">drop_on</span> ${esc(drop.length ? drop.join(", ") : "—")}</div>`);
-    const floor = filters.floor;
-    const floorText =
-      floor && floor.amount != null
-        ? `${floor.amount} ${floor.currency || ""} / ${floor.unit || ""}`.trim()
-        : "no comp_floor";
-    parts.push(`<div><span class="muted">floor</span> ${esc(floorText)}</div>`);
-    const inbox = filters.inbox || {};
-    const capText =
-      inbox.pending_cap === 0
-        ? `unlimited (${inbox.pending_count} pending)`
-        : `${inbox.pending_count} / ${inbox.pending_cap}`;
-    parts.push(`<div><span class="muted">pending cap</span> ${esc(capText)}</div>`);
     if (filters.poll && filters.poll.help) {
       parts.push(`<div class="muted">${esc(filters.poll.help)}</div>`);
     }
@@ -1414,6 +1466,7 @@
           <div class="row-line1"><strong>${esc(s.name)}</strong><span class="muted">${s.enabled ? "enabled" : "disabled"}</span></div>
           <div>${esc(s.kind)}</div>
           <div class="faint" title="${esc(s.last_run_at || "")}">${esc(s.last_run_at ? relative(s.last_run_at) : "never run")}</div>
+          <div class="muted">${esc(s.listing_count)} listings · ${esc(s.inbox_count)} inbox</div>
           ${s.last_error ? `<div class="danger-text">${esc(s.last_error)}</div>` : ""}
           ${sourceConfigHtml(s)}
           <div class="row-actions">
@@ -3449,8 +3502,11 @@
 
   document.addEventListener("input", (ev) => {
     if (ev.target.id === "filter-search") {
-      if (state.route.name === "inbox") state.inboxQuery = ev.target.value;
-      else state.boardQuery = ev.target.value;
+      if (state.route.name === "inbox") {
+        ev.target.classList.toggle("is-pending", ev.target.value !== state.inboxQuery);
+      } else {
+        state.boardQuery = ev.target.value;
+      }
     }
     if (ev.target.closest("#quoted-form")) {
       state.quotedDirty = true;
@@ -3543,10 +3599,18 @@
       ev.preventDefault();
       if (state.route.name === "inbox") state.inboxQuery = ev.target.value;
       else state.boardQuery = ev.target.value;
-      render();
+      render().then(restoreFilterSearchCaret);
       return;
     }
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      if (ev.key === "Escape" && ev.target.id === "filter-search") {
+        ev.preventDefault();
+        ev.target.value = "";
+        if (state.route.name === "inbox") state.inboxQuery = "";
+        else state.boardQuery = "";
+        render().then(restoreFilterSearchCaret);
+        return;
+      }
       if (ev.key === "/" && ev.target.id !== "filter-search") return;
       if (ev.key !== "Escape") return;
     }
@@ -3576,7 +3640,36 @@
     }
     if (ev.key === "Enter") {
       const row = document.activeElement?.closest("[data-href]");
-      if (row) go(row.getAttribute("data-href"));
+      if (row) {
+        go(row.getAttribute("data-href"));
+        return;
+      }
+    }
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.closest("[data-inbox-sort]")) {
+      ev.preventDefault();
+      ev.target.closest("[data-inbox-sort]").click();
+    }
+  });
+
+  function restoreFilterSearchCaret() {
+    const f = document.getElementById("filter-search");
+    if (!f) return;
+    f.focus();
+    const n = f.value.length;
+    try {
+      f.setSelectionRange(n, n);
+    } catch {
+      /* type=search may reject setSelectionRange */
+    }
+  }
+
+  document.addEventListener("change", (ev) => {
+    const orderSel = ev.target.closest("[data-inbox-order]");
+    if (orderSel && orderSel.tagName === "SELECT") {
+      const [key, dir] = (orderSel.value || "created_at:desc").split(":");
+      state.inboxSort = key;
+      state.inboxOrder = dir === "asc" ? "asc" : "desc";
+      render();
     }
   });
 
