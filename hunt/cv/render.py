@@ -102,6 +102,7 @@ def render_cv(
     data_dir: str | Path | None = None,
     emphasis_path: str | Path | None = None,
     output_dir: str | Path | None = None,
+    output_name: str | None = None,
     quiet: bool = False,
 ) -> Path:
     """Render a tagged PDF into the workspace (never the source tree)."""
@@ -227,9 +228,14 @@ def render_cv(
 
     out_dir = Path(output_dir).expanduser().resolve() if output_dir else cv_output_dir(data)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = opts.get("output_name") or (
+    stem = output_name or opts.get("output_name") or (
         prof["name"].title().replace(" ", "_") + "_CV"
     )
+    stem = Path(str(stem)).name
+    if stem.lower().endswith(".pdf"):
+        stem = stem[:-4]
+    if not stem or stem in {".", ".."}:
+        stem = "CV"
     out = out_dir / f"{stem}.pdf"
 
     html_doc = html_doc.replace(

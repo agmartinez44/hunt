@@ -27,6 +27,7 @@ def finalize_pdf(
     author: str | None = None,
     *,
     data_dir: str | Path | None = None,
+    quiet: bool = False,
 ) -> Path:
     pdf_path = Path(pdf_path)
     if author is None:
@@ -57,5 +58,6 @@ def finalize_pdf(
             if k in di:
                 del di[k]
         pdf.save(pdf_path)
-    print(f"finalized: {pdf_path}")
+    if not quiet:
+        print(f"finalized: {pdf_path}")
     return pdf_path

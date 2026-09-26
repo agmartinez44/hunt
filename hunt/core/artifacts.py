@@ -50,6 +50,7 @@ def add_file(
     *,
     kind: str = "other",
     filename: str | None = None,
+    replace: bool = False,
 ) -> Artifact:
     get_application(ws, application_id)
     src = Path(file).expanduser().resolve()
@@ -61,35 +62,60 @@ def add_file(
     except ValueError:
         inside_workspace = False
     dest_name = Path(filename or src.name).name
-    if not dest_name or dest_name in {".", ".."}:
+    if not dest_name or dest_name in {".", ".."} or Path(dest_name).name != dest_name:
         raise ValidationError("invalid artifact filename")
+    kind_name = kind or "other"
     dest_dir = application_dir(ws, application_id)
     dest = dest_dir / dest_name
-    if dest.exists() and dest.resolve() != src:
-        raise HuntError(f"artifact already exists: {dest_name}")
-    if not dest.exists():
+    same_file = dest.exists() and dest.resolve() == src.resolve()
+    if dest.exists() and not same_file:
+        if not replace:
+            raise HuntError(f"artifact already exists: {dest_name}")
+        shutil.copy2(src, dest)
+    elif not dest.exists():
         shutil.copy2(src, dest)
     elif not inside_workspace:
         shutil.copy2(src, dest)
     digest = hashlib.sha256(dest.read_bytes()).hexdigest()
     now = now_iso()
-    art_id = new_id()
-    try:
+    existing = ws.conn.execute(
+        """
+        SELECT id FROM artifacts
+        WHERE application_id = ? AND filename = ?
+        """,
+        (application_id, dest_name),
+    ).fetchone()
+    if existing:
+        if not replace:
+            raise HuntError(f"artifact already exists: {dest_name}")
+        art_id = existing["id"]
         ws.conn.execute(
             """
-            INSERT INTO artifacts(id, application_id, kind, filename, sha256, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            UPDATE artifacts
+            SET kind = ?, sha256 = ?, created_at = ?
+            WHERE id = ?
             """,
-            (art_id, application_id, kind or "other", dest_name, digest, now),
+            (kind_name, digest, now, art_id),
         )
-    except Exception as exc:
-        raise HuntError(f"could not record artifact {dest_name}: {exc}") from exc
-    append_event(ws, application_id, "artifact_added", f"{kind}:{dest_name}")
+        append_event(ws, application_id, "artifact_replaced", f"{kind_name}:{dest_name}")
+    else:
+        art_id = new_id()
+        try:
+            ws.conn.execute(
+                """
+                INSERT INTO artifacts(id, application_id, kind, filename, sha256, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (art_id, application_id, kind_name, dest_name, digest, now),
+            )
+        except Exception as exc:
+            raise HuntError(f"could not record artifact {dest_name}: {exc}") from exc
+        append_event(ws, application_id, "artifact_added", f"{kind_name}:{dest_name}")
     ws.conn.commit()
     return Artifact(
         id=art_id,
         application_id=application_id,
-        kind=kind or "other",
+        kind=kind_name,
         filename=dest_name,
         sha256=digest,
         path=str(dest),
