@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -65,11 +66,44 @@ from hunt.core.inbox import (
     serialize_inbox_item,
     serialize_inbox_list,
 )
-from hunt.core.jobs import enqueue as enqueue_job, get_job, list_jobs
+from hunt.core.jobs import Job, enqueue as enqueue_job, get_job, list_jobs
+from hunt.core.position_view import application_position, job_subject
+from hunt.core.reveal import path_inside, reveal_file
 from hunt.core.sources import list_sources, run_source
 from hunt.core.workspace import Workspace, WorkspaceError, resolve_data_dir
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _application_json(ws: Workspace, app: Any) -> dict[str, Any]:
+    data = app.to_dict()
+    data["position"] = application_position(ws, app)
+    return data
+
+
+def _job_json(ws: Workspace, job: Job) -> dict[str, Any]:
+    data = job.to_dict()
+    data["subject"] = job_subject(ws, job)
+    return data
+
+
+def _start_job(data_dir: str, job_id: str) -> None:
+    """Run one queued job on a background thread. The UI polls until it finishes."""
+
+    def _run() -> None:
+        try:
+            with Workspace.open(data_dir) as ws:
+                from hunt.core.worker import run_one
+
+                run_one(ws, job_id)
+        except Exception:
+            return
+
+    threading.Thread(
+        target=_run,
+        name=f"hunt-job-{job_id[:8]}",
+        daemon=True,
+    ).start()
 
 CREATE_FIELDS = (
     "company",
@@ -203,7 +237,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         status: str | None = None, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            apps = [a.to_dict() for a in list_applications(ws, status=status)]
+            apps = [_application_json(ws, a) for a in list_applications(ws, status=status)]
         return {"applications": apps}
 
     @app.post("/api/applications")
@@ -228,7 +262,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         if not fields.get("company"):
             raise ValidationError("company is required")
         with open_ws() as ws:
-            app = create_application(ws, **fields).to_dict()
+            app = _application_json(ws, create_application(ws, **fields))
         return {"application": app}
 
     @app.get("/api/applications/{application_id}")
@@ -236,7 +270,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         application_id: str, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         with open_ws() as ws:
-            app = get_application(ws, application_id).to_dict()
+            app = _application_json(ws, get_application(ws, application_id))
         return {"application": app}
 
     @app.patch("/api/applications/{application_id}")
@@ -261,7 +295,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 f"status must be one of {list(APPLICATION_STATUSES)}"
             )
         with open_ws() as ws:
-            app = update_application(ws, application_id, **fields).to_dict()
+            app = _application_json(ws, update_application(ws, application_id, **fields))
         return {"application": app}
 
     @app.get("/api/applications/{application_id}/events")
@@ -305,17 +339,39 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/api/applications/{application_id}/artifacts/{artifact_id}/file")
     def api_artifact_file(
-        application_id: str, artifact_id: str, _: None = Depends(require_auth)
+        application_id: str,
+        artifact_id: str,
+        inline: bool = False,
+        _: None = Depends(require_auth),
     ) -> FileResponse:
         with open_ws() as ws:
             arts = list_artifacts(ws, application_id)
             match = next((a for a in arts if a.id == artifact_id), None)
             if not match:
                 raise NotFoundError(f"artifact not found: {artifact_id}")
-            path = Path(match.path)
+            path = path_inside(ws.root / "attachments", Path(match.path))
             if not path.is_file():
                 raise NotFoundError(f"artifact file missing: {match.filename}")
-            return FileResponse(path, filename=match.filename)
+            return FileResponse(
+                path,
+                filename=match.filename,
+                content_disposition_type="inline" if inline else "attachment",
+            )
+
+    @app.post("/api/applications/{application_id}/artifacts/{artifact_id}/reveal")
+    def api_reveal_artifact(
+        application_id: str, artifact_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        with open_ws() as ws:
+            arts = list_artifacts(ws, application_id)
+            match = next((a for a in arts if a.id == artifact_id), None)
+            if not match:
+                raise NotFoundError(f"artifact not found: {artifact_id}")
+            path = path_inside(ws.root / "attachments", Path(match.path))
+            if not path.is_file():
+                raise NotFoundError(f"artifact file missing: {match.filename}")
+            reveal_file(path)
+            return {"ok": True, "path": str(path), "filename": match.filename}
 
     @app.get("/api/inbox")
     def api_list_inbox(
@@ -353,7 +409,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         body = _quoted_from_body(body)
         fields = _pick(body, UPDATE_FIELDS)
         with open_ws() as ws:
-            app = promote(ws, item_id, **fields).to_dict()
+            app = _application_json(ws, promote(ws, item_id, **fields))
         return {"application": app}
 
     @app.post("/api/inbox/{item_id}/dismiss")
@@ -396,7 +452,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         with open_ws() as ws:
             jobs = [
-                j.to_dict()
+                _job_json(ws, j)
                 for j in list_jobs(ws, state=state, job_type=type, target_id=target)
             ]
         return {"jobs": jobs}
@@ -411,20 +467,38 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         job_type = body.get("type")
         if not job_type:
             raise ValidationError("type is required")
+        should_run = False
         with open_ws() as ws:
             job = enqueue_job(
                 ws,
                 job_type=str(job_type),
                 target_id=body.get("target_id") or body.get("target"),
                 payload=body.get("payload") if isinstance(body.get("payload"), dict) else None,
-            ).to_dict()
-        return {"job": job}
+            )
+            data = _job_json(ws, job)
+            root = str(ws.root)
+            should_run = bool(body.get("run")) and job.type == "tailor-cv"
+            job_id = job.id
+        if should_run:
+            _start_job(root, job_id)
+        return {"job": data}
 
     @app.get("/api/jobs/{job_id}")
     def api_get_job(job_id: str, _: None = Depends(require_auth)) -> dict[str, Any]:
         with open_ws() as ws:
-            job = get_job(ws, job_id).to_dict()
+            job = _job_json(ws, get_job(ws, job_id))
         return {"job": job}
+
+    @app.post("/api/jobs/{job_id}/run")
+    def api_run_job(job_id: str, _: None = Depends(require_auth)) -> dict[str, Any]:
+        with open_ws() as ws:
+            job = get_job(ws, job_id)
+            data = _job_json(ws, job)
+            root = str(ws.root)
+            state = job.state
+        if state == "queued":
+            _start_job(root, job_id)
+        return {"job": data}
 
     def _json_object(body: Any) -> dict[str, Any]:
         if not isinstance(body, dict):

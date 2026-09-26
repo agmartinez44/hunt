@@ -186,10 +186,44 @@ def test_tailor_cv_job_writes_attachment(workspace):
     assert out["job"]["state"] == "done"
     pdf = Path(out["result"]["path"])
     assert pdf.is_file()
+    assert pdf.name == "Jane_Doe_CV.pdf"
     assert pdf.parent == data / "attachments" / "applications" / app_id
     assert out["result"]["artifact"]["kind"] == "cv"
+    assert out["result"]["artifact"]["filename"] == "Jane_Doe_CV.pdf"
+    import pikepdf
+
+    with pikepdf.open(pdf) as doc:
+        assert "/Producer" not in doc.docinfo
+        assert "/Creator" not in doc.docinfo
+        assert str(doc.docinfo["/Title"]) == "Curriculum Vitae"
+        assert str(doc.docinfo["/Author"]) == "Jane Doe"
     _, status = _json(["jobs", "status", out["job"]["id"]], env)
     assert status["job"]["state"] == "done"
+
+    emphasis = data / "emphasis-acme.yaml"
+    emphasis.write_text(
+        "emphasis_profile: generic\noutput_name: Jane_Doe_Acme_Staff_SRE\nprojects: []\n",
+        encoding="utf-8",
+    )
+    _, again = _json(
+        [
+            "jobs",
+            "enqueue",
+            "--type",
+            "tailor-cv",
+            "--target",
+            app_id,
+            "--emphasis",
+            str(emphasis),
+            "--run",
+        ],
+        env,
+    )
+    assert again["job"]["state"] == "done"
+    again_pdf = Path(again["result"]["path"])
+    assert again_pdf.name == "Jane_Doe_CV.pdf"
+    assert "Acme" not in again_pdf.name
+    assert again["result"]["artifact"]["id"] == out["result"]["artifact"]["id"]
 
 
 def test_disabled_imap_source_does_not_run(workspace):

@@ -13,7 +13,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from hunt.core.artifacts import add_file, list_artifacts
+from hunt.core.cv import neutral_cv_stem
+from hunt.core.errors import ValidationError
 from hunt.core.inbox import add_item, dismiss
+from hunt.core.reveal import path_inside
 from hunt.core.sources import list_sources
 from hunt.core.workspace import Workspace
 from hunt.http.app import create_app
@@ -1166,3 +1170,150 @@ def test_agent_http_secret_never_returned_and_local_round_trip(client):
     mcp = json.loads((data / ".mcp.json").read_text(encoding="utf-8"))
     assert mcp["mcpServers"]["hunt"]["env"]["HUNT_DATA"] == str(data.resolve())
     assert secret_value not in json.dumps(mcp)
+
+
+def test_ui_position_cv_and_job_breakdown():
+    """AGU-93: shared position facts, CV actions, job breakdown."""
+    static = ROOT / "hunt" / "http" / "static"
+    js = (static / "app.js").read_text()
+    css = (static / "hunt.css").read_text()
+    assert 'data-primitive="PositionFacts"' in js
+    assert 'data-primitive="CvPanel"' in js
+    assert 'data-primitive="CvFile"' in js
+    assert 'data-primitive="TailorStatus"' in js
+    assert "Tailor CV" in js
+    assert "Show in folder" in js
+    assert "data-reveal-artifact" in js
+    assert 'name: "job"' in js
+    assert 'data-href="/jobs/' in js
+    assert "[data-primitive=\"PositionFacts\"]" in css
+    assert ".tailor-progress" in css
+    assert "prefers-reduced-motion: reduce" in css
+    assert "@keyframes hunt-progress" in css
+    assert 'id="enqueue-tailor"' in js
+    assert "Choose file" in js
+    assert _eval_parse_route(js, "/jobs")["name"] == "jobs"
+    job = _eval_parse_route(js, "/jobs/job-1")
+    assert job["name"] == "job"
+    assert job["id"] == "job-1"
+    detail = _eval_parse_route(js, "/applications/app-1")
+    assert detail["name"] == "detail"
+    assert detail["id"] == "app-1"
+
+
+def test_neutral_cv_stem_is_ascii_name_only():
+    assert neutral_cv_stem("Jane Doe") == "Jane_Doe_CV"
+    assert neutral_cv_stem("José García") == "Jose_Garcia_CV"
+    assert "Acme" not in neutral_cv_stem("Jane Doe")
+
+
+def test_path_inside_rejects_escape(tmp_path: Path):
+    root = tmp_path / "attachments"
+    root.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("no", encoding="utf-8")
+    with pytest.raises(ValidationError):
+        path_inside(root, outside)
+    inside = root / "Jane_Doe_CV.pdf"
+    inside.write_bytes(b"%PDF")
+    assert path_inside(root, inside) == inside.resolve()
+
+
+def test_application_position_and_job_subject(client):
+    http, _, _ = client
+    created = http.post(
+        "/api/applications",
+        json={
+            "company": "Acme Radar",
+            "title_posted": "Staff SRE",
+            "source": "manual",
+            "url": "https://example.test/jobs/acme",
+            "location_country": "Ireland",
+            "location_city": "Dublin",
+            "modality": "remote",
+            "engagement": "b2b",
+            "comp_amount": 8000,
+            "comp_currency": "EUR",
+            "comp_unit": "month",
+        },
+    )
+    assert created.status_code == 200, created.text
+    app = created.json()["application"]
+    pos = app["position"]
+    assert pos["company"] == "Acme Radar"
+    assert pos["role"] == "Staff SRE"
+    assert pos["location"] == "Remote · Ireland"
+    assert pos["location_title"] == "Dublin"
+    assert pos["engagement_label"] == "Freelance"
+    assert pos["source"] == "manual"
+    assert pos["pay_month"]["line1"] != "—"
+    queued = http.post("/api/jobs", json={"type": "tailor-cv", "target_id": app["id"]})
+    assert queued.status_code == 200, queued.text
+    subject = queued.json()["job"]["subject"]
+    assert subject["company"] == "Acme Radar"
+    assert subject["role"] == "Staff SRE"
+    assert subject["pay_month"]["line1"] == pos["pay_month"]["line1"]
+    got = http.get(f"/api/jobs/{queued.json()['job']['id']}")
+    assert got.json()["job"]["subject"]["location"] == "Remote · Ireland"
+
+
+def test_tailor_run_flag_starts_only_tailor_jobs(client, monkeypatch):
+    started: dict[str, str] = {}
+
+    def _fake(root: str, job_id: str) -> None:
+        started["id"] = job_id
+        started["root"] = root
+
+    monkeypatch.setattr("hunt.http.app._start_job", _fake)
+    http, _, _ = client
+    created = http.post("/api/applications", json={"company": "Initech", "title_posted": "SRE"})
+    app_id = created.json()["application"]["id"]
+    queued = http.post("/api/jobs", json={"type": "tailor-cv", "target_id": app_id, "run": True})
+    assert queued.status_code == 200, queued.text
+    assert started["id"] == queued.json()["job"]["id"]
+    screen = http.post("/api/jobs", json={"type": "screen-inbox", "run": True})
+    assert screen.status_code == 200, screen.text
+    assert started["id"] == queued.json()["job"]["id"]
+    run = http.post(f"/api/jobs/{screen.json()['job']['id']}/run")
+    assert run.status_code == 200, run.text
+    assert started["id"] == screen.json()["job"]["id"]
+
+
+def test_reveal_artifact_and_replace_cv(client, monkeypatch):
+    opened: dict[str, Path] = {}
+    monkeypatch.setattr("hunt.http.app.reveal_file", lambda path: opened.setdefault("path", Path(path)))
+    http, data, _ = client
+    created = http.post("/api/applications", json={"company": "Initech", "title_posted": "SRE"})
+    app_id = created.json()["application"]["id"]
+    uploaded = http.post(
+        f"/api/applications/{app_id}/artifacts",
+        files={"file": ("notes.txt", b"hello", "text/plain")},
+        data={"kind": "notes"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    art = uploaded.json()["artifact"]
+    revealed = http.post(f"/api/applications/{app_id}/artifacts/{art['id']}/reveal")
+    assert revealed.status_code == 200, revealed.text
+    assert opened["path"].name == "notes.txt"
+    assert revealed.json()["path"] == str(opened["path"])
+    listed = http.get(f"/api/applications/{app_id}/artifacts/{art['id']}/file")
+    assert listed.status_code == 200
+    assert "attachment" in listed.headers["content-disposition"].lower()
+    inline = http.get(f"/api/applications/{app_id}/artifacts/{art['id']}/file", params={"inline": "true"})
+    assert inline.status_code == 200
+    assert inline.headers["content-disposition"].lower().startswith("inline")
+
+    with Workspace.open(data) as ws:
+        first = data / "one.txt"
+        first.write_text("one", encoding="utf-8")
+        second = data / "two.txt"
+        second.write_text("two", encoding="utf-8")
+        kept = add_file(ws, app_id, first, kind="cv", filename="Jane_Doe_CV.pdf")
+        replaced = add_file(
+            ws, app_id, second, kind="cv", filename="Jane_Doe_CV.pdf", replace=True
+        )
+        arts = [a for a in list_artifacts(ws, app_id) if a.kind == "cv"]
+    assert kept.id == replaced.id
+    assert len(arts) == 1
+    pdf = data / "attachments" / "applications" / app_id / "Jane_Doe_CV.pdf"
+    assert pdf.read_text(encoding="utf-8") == "two"

@@ -46,6 +46,12 @@ hunt-cv verify "$HUNT_DATA/attachments/cv/Jane_Doe_CV.pdf" --json --expect "<key
 Then rasterize and visually inspect every page. Text-pass is necessary,
 not sufficient.
 
+A render attached to an application (`hunt cv render --application`, or a
+`tailor-cv` job) always saves `{Name}_CV.pdf` from the profile name and
+finalizes it in the same step. Emphasis `output_name` is not used for that
+file, so a company or role cannot leak into the filename. PDF metadata stays
+the neutral docinfo `finalize` already writes (no producer, no dates).
+
 ## 4. A PDF is not a send
 
 Hunt does not submit applications or send mail. Record a send as an

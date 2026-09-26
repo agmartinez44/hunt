@@ -48,7 +48,13 @@
     "EUR /mo": "gross_month",
   };
   const SOURCE_COLS = ["Name", "Adapter", "Enabled", "Last run", "Last error", "Listings", "Inbox", "", "Id"];
-  const JOB_COLS = ["Id", "Type", "Target", "State", "Created", "Started", "Finished", "Error"];
+  const JOB_COLS = ["Type", "Position", "Pay", "State", "Created", "Error"];
+  const JOB_LABELS = {
+    "source-poll": "Source poll",
+    "screen-inbox": "Screen inbox",
+    "triage-inbox": "Triage inbox",
+    "tailor-cv": "Tailor CV",
+  };
   const PROFILE_TABS = [
     ["profile", "Profile"],
     ["positions", "Positions"],
@@ -93,6 +99,7 @@
   };
 
   let pendingKey = "";
+  let liveTimer = 0;
 
   const state = {
     meta: null,
@@ -123,6 +130,7 @@
     agentReplaceKey: false,
     agentForm: null,
     agentError: null,
+    detailApp: null,
   };
 
   function $(sel, root = document) {
@@ -432,6 +440,8 @@
       return { name: "profile", id: null, tab: allowed.includes(tab) ? tab : "positions" };
     }
     if (path === "/settings") return { name: "settings", id: null, tab: null };
+    const jobPage = path.match(/^\/jobs\/([^/]+)$/);
+    if (jobPage) return { name: "job", id: decodeURIComponent(jobPage[1]), tab: null };
     const m = path.match(/^\/applications\/([^/]+)$/);
     if (m) return { name: "detail", id: decodeURIComponent(m[1]), tab: null };
     return { name: "notfound", id: null, tab: null };
@@ -457,7 +467,50 @@
   }
 
   function titleOf(app) {
-    return app.title_ours || app.title_posted || "";
+    return (app.position && app.position.role) || app.title_ours || app.title_posted || "";
+  }
+
+  function modalityLabel(value) {
+    const v = String(value || "").trim().toLowerCase();
+    if (v === "remote") return "Remote";
+    if (v === "hybrid") return "Hybrid";
+    if (v === "onsite") return "Onsite";
+    return v ? String(value) : "";
+  }
+
+  function positionMeta(it) {
+    const view = (it && it.position) || it || {};
+    const loc = view.location || locationOf(it);
+    const eng = engagementOf(view.engagement_label || view.engagement ? view : it);
+    const source = view.source || view.source_id || "";
+    return [loc, eng, source].filter(Boolean).join(" · ");
+  }
+
+  function jobTypeLabel(value) {
+    return JOB_LABELS[value] || value || "";
+  }
+
+  function modalityOptions(current) {
+    const options = [
+      { value: "", label: "—" },
+      { value: "remote", label: "Remote" },
+      { value: "hybrid", label: "Hybrid" },
+      { value: "onsite", label: "Onsite" },
+    ];
+    if (current && !options.some((o) => o.value === current)) options.push({ value: current, label: modalityLabel(current) || current });
+    return options;
+  }
+
+  function engagementOptions(current) {
+    const options = [
+      { value: "", label: "—" },
+      { value: "b2b", label: "Freelance" },
+      { value: "fte", label: "FTE" },
+      { value: "uop", label: "Employment contract" },
+      { value: "unknown", label: "Unknown" },
+    ];
+    if (current && !options.some((o) => o.value === current)) options.push({ value: current, label: engagementLabel(current) });
+    return options;
   }
 
   function locationOf(app) {
@@ -897,7 +950,7 @@
     }).join("");
     const types = JOB_TYPES.map((t) => {
       const on = state.jobTypeFilters.has(t);
-      return `<button type="button" data-primitive="FilterChip" data-job-type="${t}" aria-pressed="${on}">${t}</button>`;
+      return `<button type="button" data-primitive="FilterChip" data-job-type="${t}" aria-pressed="${on}">${esc(jobTypeLabel(t))}</button>`;
     }).join("");
     return `<div data-primitive="FilterBar">${states}${types}</div>`;
   }
@@ -905,15 +958,18 @@
   function appRowCells(app) {
     const q = quotedOf(app);
     const d = app.comp_derived;
-    const pay = q
-      ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
-      : PayQuoted(null);
+    const pos = app.position;
+    const pay = pos && pos.pay_month
+      ? PayMonth(pos)
+      : q
+        ? `<div class="pay-cell">${PayQuoted(q)}${NetEstimate(d)}</div>`
+        : PayQuoted(null);
     return {
       company: `<strong>${esc(app.company)}</strong>`,
       title: `<span class="muted">${esc(titleOf(app))}</span>`,
       status: StatusPill(app.status),
-      modality: esc(app.modality || ""),
-      location: esc(locationOf(app)),
+      modality: esc(modalityLabel(app.modality) || "—"),
+      location: esc((pos && pos.location) || locationOf(app) || "—"),
       pay,
       updated: `<span title="${esc(app.updated_at)}">${esc(relative(app.updated_at))}</span>`,
       id: CopyId(app.id),
@@ -978,6 +1034,7 @@
           return `<article data-primitive="Row" class="board-card" data-href="/applications/${esc(a.id)}">
             <div class="row-line1">${c.company}${c.status}</div>
             <div>${c.title}</div>
+            <div class="muted">${esc(positionMeta(a))}</div>
             <div class="row-line1">${c.pay}</div>
           </article>`;
         })
@@ -1006,8 +1063,8 @@
         ${FormField("Source", input("source", "manual"))}
         ${FormField("City", input("location_city", ""))}
         ${FormField("Country", input("location_country", ""))}
-        ${FormField("Modality", select("modality", "", ["", "remote", "hybrid", "onsite"]))}
-        ${FormField("Engagement", select("engagement", "", ["", "b2b", "fte", "uop", "unknown"]))}
+        ${FormField("Modality", select("modality", "", modalityOptions("")))}
+        ${FormField("Engagement", select("engagement", "", engagementOptions("")))}
         ${FormField("Quoted amount", input("comp_amount", "", "type=number step=any"))}
         ${FormField("Currency", input("comp_currency", ""))}
         ${FormField("Unit", select("comp_unit", "", ["", "hour", "day", "month", "year"]))}
@@ -1017,6 +1074,167 @@
       </form>
       </div>`;
     root.innerHTML = shell("board", badges, body);
+  }
+
+  function stopLive() {
+    if (liveTimer) {
+      clearTimeout(liveTimer);
+      liveTimer = 0;
+    }
+  }
+
+  function scheduleLive(fn, ms) {
+    stopLive();
+    liveTimer = setTimeout(fn, ms || 1200);
+  }
+
+  function latestCv(artifacts) {
+    const list = ((artifacts && artifacts.artifacts) || []).filter((a) => a.kind === "cv");
+    list.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+    return list.length ? list[list.length - 1] : null;
+  }
+
+  function tailorJobsOf(jobs) {
+    return (jobs || [])
+      .filter((j) => j.type === "tailor-cv")
+      .slice()
+      .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  }
+
+  function activeTailorJob(jobs) {
+    return tailorJobsOf(jobs).find((j) => j.state === "queued" || j.state === "running") || null;
+  }
+
+  function PositionFacts(p) {
+    if (!p) return "";
+    const rows = [];
+    const add = (label, html) => {
+      if (!html) return;
+      rows.push(`<div><dt>${esc(label)}</dt><dd>${html}</dd></div>`);
+    };
+    add("Company", p.company ? esc(p.company) : "");
+    const role = p.role || p.title || "";
+    if (role) add("Role", p.url ? PostingLink(p.url, role) : esc(role));
+    add("Location", p.location ? esc(p.location) : "");
+    if (p.engagement || p.engagement_label) add("Engagement", engagementCell(p));
+    if (p.pay_month) add("Pay", PayMonth(p));
+    if (p.modality) add("Modality", esc(modalityLabel(p.modality)));
+    const source = p.source || p.source_id;
+    add("Source", source ? esc(source) : "");
+    if (!rows.length) return "";
+    return `<dl data-primitive="PositionFacts">${rows.join("")}</dl>`;
+  }
+
+  function CvFile(art) {
+    if (!art) return "";
+    const appId = art.application_id;
+    const href = `/api/applications/${encodeURIComponent(appId)}/artifacts/${encodeURIComponent(art.id)}/file`;
+    return `<div class="cv-file" data-primitive="CvFile">
+      <div class="cv-name">${esc(art.filename)}</div>
+      <div class="cv-path" title="${esc(art.path)}">${esc(art.path)}</div>
+      <div class="cv-actions">
+        ${Btn("Open", { href: `${href}?inline=1`, attrs: 'target="_blank" rel="noopener"' })}
+        ${Btn("Download", { href, attrs: `download="${esc(art.filename)}"` })}
+        ${Btn("Show in folder", { attrs: `data-reveal-artifact="${esc(art.id)}" data-application="${esc(appId)}"` })}
+        ${Btn("Copy path", { variant: "ghost", attrs: `data-copy="${esc(art.path)}"` })}
+      </div>
+    </div>`;
+  }
+
+  function CvPanel(app, artifacts, jobs) {
+    const cv = latestCv(artifacts);
+    const active = activeTailorJob(jobs);
+    const newest = tailorJobsOf(jobs)[0];
+    let status = "";
+    if (active) {
+      const label = active.state === "running" ? "Tailoring CV" : "Queued";
+      status = `<div data-primitive="TailorStatus" data-state="${esc(active.state)}">
+        <span>${esc(label)}</span>
+        ${JobStatePill(active.state)}
+        <a href="/jobs/${esc(active.id)}">${esc(jobTypeLabel(active.type))}</a>
+      </div>
+      <div class="tailor-progress" role="progressbar" aria-label="Tailoring CV"></div>`;
+    } else if (newest && newest.state === "failed") {
+      status = `<div data-primitive="TailorStatus" data-state="failed"><span>${esc(newest.error || "Tailor failed")}</span></div>`;
+    } else if (cv) {
+      status = `<div data-primitive="TailorStatus" data-state="ready"><span>Ready</span></div>`;
+    } else {
+      status = `<div data-primitive="TailorStatus" data-state="empty"><span>No CV yet</span></div>`;
+    }
+    const label = cv ? "Tailor again" : "Tailor CV";
+    const run = active && active.state === "queued"
+      ? Btn("Run", { attrs: `data-run-job="${esc(active.id)}"` })
+      : "";
+    return `<section class="section" data-primitive="CvPanel">
+      <h2>CV</h2>
+      ${status}
+      ${cv ? CvFile(cv) : ""}
+      <div class="cv-actions">
+        ${Btn(label, { variant: "primary", attrs: `id="enqueue-tailor" ${active ? "disabled" : ""}` })}
+        ${run}
+        ${CommandHint(`hunt jobs enqueue --type tailor-cv --target ${app.id} --run --json`)}
+      </div>
+    </section>`;
+  }
+
+  function otherFilesHtml(app, artifacts) {
+    if (artifacts && artifacts.error) return ErrorBanner(artifacts.error);
+    const arts = ((artifacts && artifacts.artifacts) || []).filter((a) => a.kind !== "cv");
+    if (!arts.length) return `<p class="muted">No job description or notes yet.</p>`;
+    return arts
+      .map((a) => {
+        const href = `/api/applications/${encodeURIComponent(app.id)}/artifacts/${encodeURIComponent(a.id)}/file`;
+        return `<div class="artifact" data-primitive="ArtifactList">
+          <span>${esc(a.kind)}</span>
+          <a href="${esc(href)}" download="${esc(a.filename)}">${esc(a.filename)}</a>
+          <span class="sha">${esc((a.sha256 || "").slice(0, 8))}</span>
+        </div>`;
+      })
+      .join("");
+  }
+
+  function appJobsHtml(jobs) {
+    const rows = (jobs || []).filter((j) => j.type !== "tailor-cv");
+    if (!rows.length) return `<p class="muted">No other jobs for this application.</p>`;
+    return rows
+      .map(
+        (j) => `<a class="job-link" href="/jobs/${esc(j.id)}">${JobStatePill(j.state)} ${esc(jobTypeLabel(j.type))}</a>`
+      )
+      .join("");
+  }
+
+  function eventsHtml(events) {
+    if (events && events.error) return ErrorBanner(events.error);
+    const evs = ((events && events.events) || []).slice().reverse();
+    if (!evs.length) return `<p class="muted">No events.</p>`;
+    return `<table data-primitive="EventLog"><thead><tr><th>Time</th><th>Actor</th><th>Verb</th><th>Detail</th></tr></thead><tbody>${evs
+      .map(
+        (e) => `<tr><td title="${esc(e.at)}">${esc(relative(e.at))}</td><td>${esc(e.actor || "cli")}</td><td>${esc(e.kind)}</td><td class="mono">${esc(e.body || "")}</td></tr>`
+      )
+      .join("")}</tbody></table>`;
+  }
+
+  async function pollDetail(appId) {
+    if (state.route.name !== "detail" || state.route.id !== appId) return;
+    let artifacts;
+    let jobs;
+    try {
+      const [f, j] = await Promise.all([
+        api(`/api/applications/${encodeURIComponent(appId)}/artifacts`),
+        api(`/api/jobs?target=${encodeURIComponent(appId)}`),
+      ]);
+      artifacts = f;
+      jobs = j.jobs || [];
+    } catch {
+      scheduleLive(() => pollDetail(appId), 2000);
+      return;
+    }
+    if (state.route.name !== "detail" || state.route.id !== appId) return;
+    const host = document.querySelector("[data-cv-host]");
+    const app = state.detailApp;
+    if (host && app && app.id === appId) host.innerHTML = CvPanel(app, artifacts, jobs);
+    const active = activeTailorJob(jobs);
+    if (active) scheduleLive(() => pollDetail(appId), 1200);
   }
 
   async function renderDetail(root, badges, id) {
@@ -1050,8 +1268,18 @@
       root.innerHTML = shell("board", badges, ErrorBanner(err.message));
       return;
     }
+    state.detailApp = app;
+    const pos = app.position || {
+      company: app.company,
+      role: titleOf(app),
+      url: app.url,
+      location: locationOf(app),
+      modality: app.modality,
+      engagement: app.engagement,
+      source: app.source,
+    };
     const q = quotedOf(app) || {};
-    const activeTailor = jobs.some((j) => j.type === "tailor-cv" && (j.state === "queued" || j.state === "running"));
+    const quoted = quotedOf(app);
     const statusOpts = STATUSES.map((s) => `<option value="${s}" ${s === app.status ? "selected" : ""}>${s}</option>`).join("");
     const header =
       `<div data-primitive="PageHeader" class="detail-header">
@@ -1061,17 +1289,20 @@
         </div>
         <div class="detail-header-actions">
           <select data-primitive="StatusSelect" id="status-select">${statusOpts}</select>
+          ${app.url ? Btn("Posting", { href: app.url, attrs: 'target="_blank" rel="noopener"' }) : ""}
           ${CopyId(app.id)}
-          ${CommandHint(`hunt applications update ${app.id} --status ${app.status} --json`)}
         </div>
       </div>`;
-    const quoted = quotedOf(app);
     const paySummary = `<div class="section pay-summary">
+      <h2>Pay</h2>
       ${PayQuoted(quoted)}
       ${quoted ? NetEstimate(app.comp_derived, { detail: true, taxHome: app.tax_home_for_net || "" }) : ""}
       ${PayDerived(app.comp_derived)}
     </div>`;
-    const quotedForm = `<form id="quoted-form" class="section" data-primitive="QuotedForm">
+    const quotedOpen = state.quotedDirty ? " open" : "";
+    const quotedForm = `<details class="fold"${quotedOpen}>
+      <summary>Edit posting details</summary>
+      <form id="quoted-form" class="section" data-primitive="QuotedForm">
       <h2>Quoted fields</h2>
       <div class="form-grid">
         ${FormField("Company", input("company", app.company))}
@@ -1081,9 +1312,9 @@
         ${FormField("Our title", input("title_ours", app.title_ours))}
         ${FormField("Country", input("location_country", app.location_country))}
         ${FormField("City", input("location_city", app.location_city))}
-        ${FormField("Modality", select("modality", app.modality || "", ["", "remote", "hybrid", "onsite"]))}
+        ${FormField("Modality", select("modality", app.modality || "", modalityOptions(app.modality || "")))}
         ${FormField("Office days", input("office_days_per_week", app.office_days_per_week, "type=number step=any"))}
-        ${FormField("Engagement", select("engagement", app.engagement || "", ["", "b2b", "fte", "uop", "unknown"]))}
+        ${FormField("Engagement", select("engagement", app.engagement || "", engagementOptions(app.engagement || "")))}
         ${FormField("Duration months", input("duration_months", app.duration_months, "type=number"))}
         ${FormField("Quoted amount", input("comp_amount", q.amount, "type=number step=any"))}
         ${FormField("Currency", input("comp_currency", q.currency))}
@@ -1095,62 +1326,33 @@
         ${FormField("Comp notes", textarea("comp_notes", app.comp_notes), { span2: true })}
       </div>
       <div class="form-actions">${Btn("Save quoted", { variant: "primary", type: "submit" })}</div>
-    </form>`;
+    </form></details>`;
     const knocks = (app.knockouts || []).map((k) => `<span class="knockout">${esc(k)}</span>`).join("") || `<span class="muted">None</span>`;
-    const urlLine = app.url
-      ? `<p><a href="${esc(app.url)}" target="_blank" rel="noopener">${esc(app.url)}</a></p>`
-      : "";
-    const arts = artifacts.artifacts || [];
-    const artHtml = artifacts.error
-      ? ErrorBanner(artifacts.error)
-      : arts.length
-        ? arts
-            .map(
-              (a) => `<div class="artifact" data-primitive="ArtifactList">
-                <span>${esc(a.kind)}</span>
-                <a href="/api/applications/${esc(app.id)}/artifacts/${esc(a.id)}/file">${esc(a.filename)}</a>
-                <span class="sha">${esc((a.sha256 || "").slice(0, 8))}</span>
-              </div>`
-            )
-            .join("")
-        : `<p class="muted">No files yet. Add a JD or enqueue tailor-cv.</p>`;
-    const evs = (events.events || []).slice().reverse();
-    const evHtml = events.error
-      ? ErrorBanner(events.error)
-      : evs.length
-        ? `<table data-primitive="EventLog"><thead><tr><th>Time</th><th>Actor</th><th>Verb</th><th>Detail</th></tr></thead><tbody>${evs
-            .map(
-              (e) => `<tr><td title="${esc(e.at)}">${esc(relative(e.at))}</td><td>${esc(e.actor || "cli")}</td><td>${esc(e.kind)}</td><td class="mono">${esc(e.body || "")}</td></tr>`
-            )
-            .join("")}</tbody></table>`
-        : `<p class="muted">No events.</p>`;
-    const jobRows = jobs
-      .map(
-        (j) => `<div data-primitive="JobRow">${JobStatePill(j.state)} ${esc(j.type)} ${CopyId(j.id)} <span class="faint">${esc(j.error || "")}</span></div>`
-      )
-      .join("");
-    const right = `
-      <section class="section"><h2>Artifacts</h2>
-        <div data-primitive="ArtifactList">${artHtml}</div>
-        <form id="artifact-form" class="artifact-form">
-          ${FormField("File", `<label data-primitive="Btn" class="file-btn">Choose file<input type="file" name="file" required></label>`)}
-          ${FormField("Kind", select("kind", "jd", ["jd", "cv", "notes", "other"]))}
-          ${Btn("Add file", { type: "submit" })}
-        </form>
-      </section>
-      <section class="section"><h2>Jobs</h2>
-        ${jobRows || `<p class="muted">No jobs for this application.</p>`}
-        ${Btn("Enqueue tailor-cv", { attrs: `id="enqueue-tailor" ${activeTailor ? "disabled" : ""}` })}
-        ${CommandHint(`hunt jobs enqueue --type tailor-cv --target ${app.id} --json`)}
-      </section>
-      <section class="section"><h2>Events</h2>${evHtml}</section>
-    `;
-    const body = `${header}<div class="detail">
-      <div class="detail-left">${paySummary}${quotedForm}<div class="section"><h2>Knockouts</h2>${knocks}${urlLine}</div></div>
-      <div class="detail-right">${right}</div>
-    </div>
-    <div class="sticky-save${state.quotedDirty ? " is-dirty" : ""}">${Btn("Save quoted", { variant: "primary", attrs: "data-submit-quoted" })}</div>`;
+    const body = `${header}
+      ${PositionFacts(pos)}
+      <div data-cv-host>${CvPanel(app, artifacts, jobs)}</div>
+      <div class="detail">
+        <div class="detail-left">
+          ${paySummary}
+          <div class="section"><h2>Knockouts</h2>${knocks}</div>
+        </div>
+        <div class="detail-right">
+          <section class="section"><h2>Other files</h2>
+            <div data-primitive="ArtifactList">${otherFilesHtml(app, artifacts)}</div>
+            <form id="artifact-form" class="artifact-form">
+              ${FormField("File", `<label data-primitive="Btn" class="file-btn">Choose file<input type="file" name="file" required></label>`)}
+              ${FormField("Kind", select("kind", "jd", ["jd", "cv", "notes", "other"]))}
+              ${Btn("Add file", { type: "submit" })}
+            </form>
+          </section>
+          <section class="section"><h2>Other jobs</h2>${appJobsHtml(jobs)}</section>
+        </div>
+      </div>
+      ${quotedForm}
+      <details class="fold"><summary>Events</summary><div class="section">${eventsHtml(events)}</div></details>
+      <div class="sticky-save${state.quotedDirty ? " is-dirty" : ""}">${Btn("Save quoted", { variant: "primary", attrs: "data-submit-quoted" })}</div>`;
     root.innerHTML = shell("board", badges, body);
+    if (activeTailorJob(jobs)) scheduleLive(() => pollDetail(app.id), 1200);
   }
 
   function inboxRowActions(it, pending) {
@@ -1372,7 +1574,7 @@
     const cards = visible
       .map((it) => {
         const role = it.role || it.title || "";
-        const meta = [it.source_id, locationOf(it), engagementOf(it)].filter(Boolean).join(" · ");
+        const meta = positionMeta(it);
         return `<article data-primitive="InboxRow" class="inbox-card">
           <div class="row-line1"><strong>${esc(it.company)}</strong><span class="card-meta">${RowMenu(it, pending)}</span></div>
           <div>${PostingLink(it.url, role || "Posting")}</div>
@@ -1566,6 +1768,87 @@
     );
   }
 
+  function jobPositionText(job) {
+    const subject = (job && job.subject) || {};
+    if (subject.kind === "application" && subject.company) {
+      return subject.role ? `${subject.company} — ${subject.role}` : subject.company;
+    }
+    return subject.label || subject.company || job.target_id || "—";
+  }
+
+  function jobPositionCell(job) {
+    const subject = (job && job.subject) || {};
+    const text = esc(jobPositionText(job));
+    if (subject.kind !== "application") return text;
+    const meta = [subject.location, subject.engagement_label].filter(Boolean).join(" · ");
+    return `<div>${text}</div>${meta ? `<div class="muted">${esc(meta)}</div>` : ""}`;
+  }
+
+  function jobPayCell(job) {
+    const subject = (job && job.subject) || {};
+    if (!subject.pay_month) return `<span class="muted">—</span>`;
+    return PayMonth(subject);
+  }
+
+  function jobOutcome(job) {
+    const result = (job && job.result) || {};
+    if (!job || job.state !== "done") return "";
+    if (job.type === "tailor-cv") {
+      if (result.artifact) return CvFile(result.artifact);
+      if (result.path) return `<p class="cv-path">${esc(result.path)}</p>`;
+      return "";
+    }
+    if (job.type === "source-poll") {
+      return `<p>${esc(result.new ?? 0)} new listings. ${esc(result.listings ?? 0)} fetched.</p>`;
+    }
+    if (job.type === "screen-inbox") {
+      return `<p>Screened ${esc(result.screened ?? 0)}. Added ${esc(result.inbox_added ?? 0)} to the inbox. Dropped ${esc(result.dropped ?? 0)}.</p>`;
+    }
+    if (job.type === "triage-inbox") {
+      return `<p>Kept ${esc(result.kept ?? 0)}. Unsure ${esc(result.unsure ?? 0)}. Dismissed ${esc(result.dismissed ?? 0)}.</p>`;
+    }
+    return "";
+  }
+
+  function jobLiveHtml(job) {
+    const active = job.state === "queued" || job.state === "running";
+    const label = job.state === "running" ? "Running" : job.state === "queued" ? "Queued" : job.state === "done" ? "Done" : "Failed";
+    const progress = active
+      ? `<div class="tailor-progress" role="progressbar" aria-label="${esc(label)}"></div>`
+      : "";
+    const run = job.state === "queued"
+      ? Btn("Run", { variant: "primary", attrs: `data-run-job="${esc(job.id)}"` })
+      : "";
+    const error = job.error ? `<p class="danger-text">${esc(job.error)}</p>` : "";
+    const when = `<dl class="job-times">
+      <div><dt>Created</dt><dd title="${esc(job.created_at || "")}">${esc(job.created_at ? relative(job.created_at) : "—")}</dd></div>
+      <div><dt>Started</dt><dd>${esc(job.started_at ? relative(job.started_at) : "—")}</dd></div>
+      <div><dt>Finished</dt><dd>${esc(job.finished_at ? relative(job.finished_at) : "—")}</dd></div>
+    </dl>`;
+    return `<div data-primitive="TailorStatus" data-state="${esc(job.state)}"><span>${esc(label)}</span>${JobStatePill(job.state)}</div>
+      ${progress}
+      ${error}
+      ${jobOutcome(job)}
+      <div class="cv-actions">${run}</div>
+      ${when}`;
+  }
+
+  async function pollJob(jobId) {
+    if (state.route.name !== "job" || state.route.id !== jobId) return;
+    let job;
+    try {
+      const data = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+      job = data.job;
+    } catch {
+      scheduleLive(() => pollJob(jobId), 2000);
+      return;
+    }
+    if (state.route.name !== "job" || state.route.id !== jobId) return;
+    const host = document.querySelector("[data-job-live]");
+    if (host) host.innerHTML = jobLiveHtml(job);
+    if (job.state === "queued" || job.state === "running") scheduleLive(() => pollJob(jobId), 1200);
+  }
+
   async function renderJobs(root, badges) {
     root.innerHTML = shell("jobs", badges, pageHeader("Jobs", "", "") + jobFiltersHtml() + LoadingSkeleton(8, JOB_COLS));
     let data;
@@ -1579,8 +1862,9 @@
     const jobs = all.filter(
       (j) => state.jobStateFilters.has(j.state) && state.jobTypeFilters.has(j.type)
     );
+    const typeOptions = JOB_TYPES.map((t) => ({ value: t, label: jobTypeLabel(t) }));
     const enqueue = `<form id="enqueue-form" class="enqueue-form">
-      ${select("type", "screen-inbox", JOB_TYPES)}
+      ${select("type", "screen-inbox", typeOptions)}
       <input data-primitive="TextInput" name="target_id" placeholder="target id">
       ${Btn("Enqueue", { variant: "primary", type: "submit" })}
       ${CommandHint("hunt jobs enqueue --type screen-inbox --json")}
@@ -1593,7 +1877,7 @@
           jobFiltersHtml() +
           EmptyState(
             "No jobs",
-            "Run a source, screen the inbox, or enqueue tailor-cv from an application.",
+            "Run a source, screen the inbox, or tailor a CV from an application.",
             Btn("Open sources", { href: "/sources" })
           )
       );
@@ -1611,24 +1895,22 @@
     }
     const rows = jobs
       .map(
-        (j) => `<tr data-primitive="JobRow">
-          <td>${CopyId(j.id)}</td>
-          <td>${esc(j.type)}</td>
-          <td>${esc(j.target_id || "—")}</td>
+        (j) => `<tr data-primitive="JobRow" data-href="/jobs/${esc(j.id)}" tabindex="0">
+          <td>${esc(jobTypeLabel(j.type))}</td>
+          <td>${jobPositionCell(j)}</td>
+          <td>${jobPayCell(j)}</td>
           <td>${JobStatePill(j.state)}</td>
           <td title="${esc(j.created_at)}">${esc(relative(j.created_at))}</td>
-          <td>${esc(j.started_at ? relative(j.started_at) : "—")}</td>
-          <td>${esc(j.finished_at ? relative(j.finished_at) : "—")}</td>
           <td class="danger-text">${esc(j.error || "")}</td>
         </tr>`
       )
       .join("");
     const cards = jobs
       .map(
-        (j) => `<article data-primitive="Row" class="job-card">
-          <div class="row-line1"><strong>${esc(j.type)}</strong>${JobStatePill(j.state)}</div>
-          <div class="muted">${esc(j.target_id || "—")}</div>
-          <div>${CopyId(j.id)}</div>
+        (j) => `<article data-primitive="Row" class="job-card" data-href="/jobs/${esc(j.id)}">
+          <div class="row-line1"><strong>${esc(jobPositionText(j))}</strong>${JobStatePill(j.state)}</div>
+          <div class="muted">${esc(jobTypeLabel(j.type))}</div>
+          <div>${jobPayCell(j)}</div>
           ${j.error ? `<div class="danger-text">${esc(j.error)}</div>` : ""}
         </article>`
       )
@@ -1639,11 +1921,58 @@
       pageHeader("Jobs", `<span class="page-count">${jobs.length}</span>`, enqueue) +
         jobFiltersHtml() +
         `<table data-primitive="DataTable" class="jobs-table">
-          <thead><tr><th>Id</th><th>Type</th><th>Target</th><th>State</th><th>Created</th><th>Started</th><th>Finished</th><th>Error</th></tr></thead>
+          <thead><tr>${JOB_COLS.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="jobs-cards">${cards}</div>`
     );
+  }
+
+  async function renderJob(root, badges, id) {
+    root.innerHTML = shell("jobs", badges, pageHeader("Job", "", "") + LoadingSkeleton(4));
+    let job;
+    try {
+      const data = await api(`/api/jobs/${encodeURIComponent(id)}`);
+      job = data.job;
+    } catch (err) {
+      if (err.status === 404) {
+        root.innerHTML = shell(
+          "jobs",
+          badges,
+          EmptyState("Job not found", "No job with that id in this workspace.", Btn("Jobs", { href: "/jobs" }))
+        );
+        return;
+      }
+      root.innerHTML = shell("jobs", badges, ErrorBanner(err.message));
+      return;
+    }
+    const subject = job.subject || {};
+    const label = jobTypeLabel(job.type);
+    const heading = subject.kind === "application" && subject.company ? subject.company : label;
+    const role = subject.kind === "application" ? subject.role : "";
+    const facts = subject.kind === "application" ? PositionFacts(subject) : "";
+    const openApp = subject.kind === "application" && subject.id
+      ? Btn("Open application", { href: `/applications/${subject.id}` })
+      : subject.kind === "source"
+        ? Btn("Sources", { href: "/sources" })
+        : subject.kind === "inbox"
+          ? Btn("Inbox", { href: "/inbox" })
+          : "";
+    const header = `<div data-primitive="PageHeader" class="detail-header">
+      <div class="detail-header-titles">
+        <p class="kicker">${esc(label)}</p>
+        <h1 class="company-title">${esc(heading)}</h1>
+        ${role ? `<p class="role-title">${esc(role)}</p>` : ""}
+      </div>
+      <div class="detail-header-actions">
+        ${openApp}
+        ${Btn("All jobs", { href: "/jobs" })}
+        ${CopyId(job.id)}
+      </div>
+    </div>`;
+    const body = `${header}${facts}<section class="section" data-job-live>${jobLiveHtml(job)}</section>`;
+    root.innerHTML = shell("jobs", badges, body);
+    if (job.state === "queued" || job.state === "running") scheduleLive(() => pollJob(job.id), 1200);
   }
 
   function knowledgeConflictHtml() {
@@ -2763,6 +3092,7 @@
   }
 
   async function render() {
+    stopLive();
     closeThemeMenu();
     closeRowMenu();
     const root = document.getElementById("app");
@@ -2814,6 +3144,7 @@
       if (r.name === "inbox") return await renderInbox(root, b);
       if (r.name === "sources") return await renderSources(root, b);
       if (r.name === "jobs") return await renderJobs(root, b);
+      if (r.name === "job") return await renderJob(root, b, r.id);
       if (r.name === "profile") return await renderProfile(root, b);
       if (r.name === "settings") return await renderSettings(root, b);
       root.innerHTML = shell(
@@ -3148,15 +3479,40 @@
     if (tailor) {
       const id = state.route.id;
       try {
-        const res = await api("/api/jobs", {
+        await api("/api/jobs", {
           method: "POST",
-          body: JSON.stringify({ type: "tailor-cv", target_id: id }),
+          body: JSON.stringify({ type: "tailor-cv", target_id: id, run: true }),
         });
-        showToast(`Job ${res.job.id} queued`);
+        showToast("Tailoring CV");
       } catch (err) {
         alert(err.message);
       }
-      render();
+      return;
+    }
+    const runJob = ev.target.closest("[data-run-job]");
+    if (runJob) {
+      const jobId = runJob.getAttribute("data-run-job");
+      try {
+        await api(`/api/jobs/${encodeURIComponent(jobId)}/run`, { method: "POST" });
+        showToast("Running");
+      } catch (err) {
+        alert(err.message);
+      }
+      return;
+    }
+    const reveal = ev.target.closest("[data-reveal-artifact]");
+    if (reveal) {
+      const artId = reveal.getAttribute("data-reveal-artifact");
+      const appId = reveal.getAttribute("data-application") || state.route.id;
+      try {
+        await api(
+          `/api/applications/${encodeURIComponent(appId)}/artifacts/${encodeURIComponent(artId)}/reveal`,
+          { method: "POST" }
+        );
+        showToast("Opened the folder");
+      } catch (err) {
+        alert(err.message);
+      }
       return;
     }
     if (ev.target.closest("[data-submit-quoted]")) {
